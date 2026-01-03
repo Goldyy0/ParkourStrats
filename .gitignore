@@ -1,0 +1,58 @@
+####################################
+# Gradle
+####################################
+.gradle/
+build/
+out/
+run/
+*.log
+
+####################################
+# Forge / Minecraft
+####################################
+eclipse/
+*.launch
+*.classpath
+*.project
+*.settings/
+.minecraft/
+logs/
+crash-reports/
+
+####################################
+# IntelliJ IDEA
+####################################
+.idea/
+*.iml
+*.iws
+*.ipr
+
+####################################
+# OS / Editor
+####################################
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+*.swp
+*.swo
+
+####################################
+# Java
+####################################
+*.class
+hs_err_pid*
+
+####################################
+# Gradle Wrapper (POZOR)
+####################################
+# DO NOT IGNORE:
+!gradlew
+!gradlew.bat
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+####################################
+# Local config
+####################################
+gradle.properties

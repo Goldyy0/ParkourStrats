@@ -1,0 +1,16 @@
+[
+{
+  "modid": "sr",
+  "name": "ParkourStrats",
+  "description": "A mod for making Parkour strat reminders and many QoL features.",
+  "version": "1.0",
+  "mcversion": "1.8",
+  "url": "https://github.com/Goldyy0/ParkourStrats",
+  "updateUrl": "",
+  "authorList": ["Texyle, Goldy"],
+  "credits": "",
+  "logoFile": "",
+  "screenshots": [],
+  "dependencies": []
+}
+]
