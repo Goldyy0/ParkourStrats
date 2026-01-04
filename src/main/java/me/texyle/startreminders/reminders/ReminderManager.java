@@ -41,6 +41,10 @@ import java.util.Set;
 
 public class ReminderManager {
 
+	// Mod settings
+	private static final String DATASET_DIR = "StratReminders/datasets";
+	private static final String SETTINGS_FILE_PATH = DATASET_DIR + "/settings.json";
+
 	// -------------------------
 	// Global + Restored + Shared stores (ALWAYS loaded)
 	// -------------------------
@@ -54,9 +58,8 @@ public class ReminderManager {
 	private static Jump selectedJump;
 
 	private static boolean toggled = false;
-
-	// Folder for datasets
-	private static final String DATASET_DIR = "StratReminders/datasets";
+	private static ModSettings settings;
+	private static boolean isSettingsLoaded = false;
 
 	// Global persistence file
 	private static final String GLOBAL_SERVER_ID = "Global";
@@ -192,6 +195,78 @@ public class ReminderManager {
 		sheetSyncAnnouncedKeys.remove(buildSheetAnnounceKey(server, map));
 
 		saveToFile();
+	}
+
+	private static void ensureSettingsLoaded() {
+		if (isSettingsLoaded && settings != null) {
+			return;
+		}
+
+		Gson gson = new Gson();
+		boolean needsSave = false;
+
+		try {
+			File file = new File(SETTINGS_FILE_PATH);
+			File parent = file.getParentFile();
+			if (parent != null && !parent.exists()) parent.mkdirs();
+
+			boolean created = file.createNewFile();
+			if (created) {
+				settings = new ModSettings();
+				needsSave = true;
+			} else {
+				ModSettings loaded = null;
+				try {
+					loaded = gson.fromJson(new FileReader(file), ModSettings.class);
+				} catch (JsonSyntaxException ignored) {
+					loaded = null;
+				}
+
+				if (loaded == null) {
+					settings = new ModSettings();
+					needsSave = true;
+				} else {
+					settings = loaded;
+				}
+			}
+		} catch (IOException e) {
+			settings = new ModSettings();
+			needsSave = true;
+		}
+
+		if (settings == null) {
+			settings = new ModSettings();
+			needsSave = true;
+		}
+
+		if (needsSave) {
+			saveSettingsToFile();
+		}
+
+		isSettingsLoaded = true;
+	}
+
+	private static void saveSettingsToFile() {
+		if (settings == null) return;
+
+		Gson gson = new GsonBuilder().setPrettyPrinting().create();
+		String json = gson.toJson(settings);
+
+		try {
+			File file = new File(SETTINGS_FILE_PATH);
+			File parent = file.getParentFile();
+			if (parent != null && !parent.exists()) parent.mkdirs();
+			file.createNewFile();
+
+			FileWriter fw = new FileWriter(file);
+			try {
+				fw.write(json);
+			} finally {
+				fw.close();
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
 	}
 
 	/**
@@ -955,10 +1030,97 @@ public class ReminderManager {
 						continue;
 					}
 
-					DrawUtils.drawTextAtCoords(active.lines, x, y, z, event.partialTicks);
+					String jumpName = (j.getId() != null) ? j.getId().trim() : "";
+					boolean isRestoredStratsContext =
+							(s != null && "RestoredStrats".equals(s.getId())) ||
+									(m != null && "RestoredStrats".equals(m.getId()));
+
+					boolean showName = !isRestoredStratsContext && isGlobalShowJumpNameEnabled();
+
+					String header = null;
+					if (showName && jumpName.length() > 0) {
+						String jumpColor = getGlobalInWorldJumpNameColor();
+						header = jumpColor + jumpName + EnumChatFormatting.RESET;
+					}
+
+					String textColor = getGlobalInWorldTextColor();
+
+					DrawUtils.drawTextAtCoords(active.lines, header, showName, textColor, x, y, z, event.partialTicks);
 				}
 			}
 		}
+	}
+
+	public static boolean isGlobalShowJumpNameEnabled() {
+		ensureSettingsLoaded();
+		return settings != null && settings.showJumpNameInWorld;
+	}
+
+	public static void setGlobalShowJumpNameEnabled(boolean enabled) {
+		ensureSettingsLoaded();
+		if (settings == null) settings = new ModSettings();
+
+		settings.showJumpNameInWorld = enabled;
+		saveSettingsToFile();
+	}
+
+	public static String getGlobalInWorldJumpNameColor() {
+		ensureSettingsLoaded();
+		if (settings == null) settings = new ModSettings();
+
+		String c = settings.inWorldJumpNameColor;
+		if (!isValidColorCode(c)) {
+			c = "\u00A7b"; // default aqua
+			settings.inWorldJumpNameColor = c;
+			saveSettingsToFile();
+		}
+		return c;
+	}
+
+	public static void setGlobalInWorldJumpNameColor(String code) {
+		ensureSettingsLoaded();
+		if (settings == null) settings = new ModSettings();
+
+		if (!isValidColorCode(code)) {
+			return;
+		}
+
+		settings.inWorldJumpNameColor = code;
+		saveSettingsToFile();
+	}
+
+	public static String getGlobalInWorldTextColor() {
+		ensureSettingsLoaded();
+		if (settings == null) settings = new ModSettings();
+
+		String c = settings.inWorldTextColor;
+		if (!isValidColorCode(c)) {
+			c = "\u00A7f"; // default white
+			settings.inWorldTextColor = c;
+			saveSettingsToFile();
+		}
+		return c;
+	}
+
+	public static void setGlobalInWorldTextColor(String code) {
+		ensureSettingsLoaded();
+		if (settings == null) settings = new ModSettings();
+
+		if (!isValidColorCode(code)) {
+			return;
+		}
+
+		settings.inWorldTextColor = code;
+		saveSettingsToFile();
+	}
+
+	private static boolean isValidColorCode(String s) {
+		if (s == null) return false;
+		if (s.length() != 2) return false;
+		if (s.charAt(0) != '\u00A7') return false;
+
+		char c = Character.toLowerCase(s.charAt(1));
+		return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
 	}
 
 	private static Reminder getActiveReminderOrFallback(Jump jump) {
@@ -1062,6 +1224,7 @@ public class ReminderManager {
 		}
 
 		Jump j = new Jump();
+		j.setShowJumpNameInWorld(true);
 		j.setId(id);
 		j.setX(x);
 		j.setY(y);
@@ -1088,6 +1251,7 @@ public class ReminderManager {
 		if (!isValidId(id)) return null;
 
 		Jump j = new Jump();
+		j.setShowJumpNameInWorld(true);
 		j.setId(id);
 		j.setX(x);
 		j.setY(y);
@@ -1339,7 +1503,9 @@ public class ReminderManager {
 			needsSave = true;
 		}
 
-		normalizeStore(globalStore);
+		if (normalizeStore(globalStore)) {
+			needsSave = true;
+		}
 
 		if (ensureGlobalStructure()) {
 			needsSave = true;
@@ -1402,7 +1568,9 @@ public class ReminderManager {
 			needsSave = true;
 		}
 
-		normalizeStore(restoredStore);
+		if (normalizeStore(restoredStore)) {
+			needsSave = true;
+		}
 
 		if (ensureRestoredStructure()) {
 			needsSave = true;
@@ -1465,7 +1633,9 @@ public class ReminderManager {
 			needsSave = true;
 		}
 
-		normalizeStore(sharedStore);
+		if (normalizeStore(sharedStore)) {
+			needsSave = true;
+		}
 
 		if (needsSave) {
 			saveStoreToPath(sharedStore, SHARED_FILE_PATH);
@@ -1478,6 +1648,7 @@ public class ReminderManager {
 		ensureGlobalLoadedAndNormalized();
 		ensureRestoredLoadedAndNormalized();
 		ensureSharedLoadedAndNormalized();
+		ensureSettingsLoaded();
 	}
 
 	private static boolean ensureGlobalStructure() {
@@ -2113,37 +2284,65 @@ public class ReminderManager {
 	// Internals
 	// -------------------------
 
-	private static void normalizeStore(DataStore store) {
-		if (store == null) return;
+	private static boolean normalizeStore(DataStore store) {
+		boolean changed = false;
+
+		if (store == null) return false;
 
 		if (store.getServers() == null) {
 			store.setServers(new ArrayList<ServerProfile>());
+			changed = true;
 		}
 
 		for (ServerProfile s : store.getServers()) {
 			if (s == null) continue;
-			if (s.getMaps() == null) s.setMaps(new ArrayList<ParkourMap>());
+			if (s.getMaps() == null) {
+				s.setMaps(new ArrayList<ParkourMap>());
+				changed = true;
+			}
 
 			for (ParkourMap m : s.getMaps()) {
 				if (m == null) continue;
-				if (m.getJumps() == null) m.setJumps(new ArrayList<Jump>());
+				if (m.getJumps() == null) {
+					m.setJumps(new ArrayList<Jump>());
+					changed = true;
+				}
 
 				for (Jump j : m.getJumps()) {
 					if (j == null) continue;
-					if (j.getReminders() == null) j.setReminders(new ArrayList<Reminder>());
+
+					if (j.getReminders() == null) {
+						j.setReminders(new ArrayList<Reminder>());
+						changed = true;
+					}
+
+					boolean isRestoredStratsContext =
+							(s != null && "RestoredStrats".equals(s.getId())) ||
+									(m != null && "RestoredStrats".equals(m.getId()));
+
+					// Ensure explicit persisted value (no fallback reliance).
+					if (j.ensureShowJumpNameInWorldInitialized(isRestoredStratsContext)) {
+						changed = true;
+					}
 
 					int idx = j.getActiveReminderIndex();
 					ArrayList<Reminder> rs = j.getReminders();
 					if (rs == null || rs.isEmpty()) {
-						j.setActiveReminderIndex(-1);
+						if (j.getActiveReminderIndex() != -1) {
+							j.setActiveReminderIndex(-1);
+							changed = true;
+						}
 					} else {
 						if (idx < -1 || idx >= rs.size()) {
 							j.setActiveReminderIndex(-1);
+							changed = true;
 						}
 					}
 				}
 			}
 		}
+
+		return changed;
 	}
 
 	public static Jump selectNearestJumpToPlayer() {
@@ -2400,6 +2599,7 @@ public class ReminderManager {
 				}
 
 				Jump j = new Jump();
+				j.setShowJumpNameInWorld(false);
 				j.setId(nextRestoredJumpName(restoredMap));
 				j.setX(e.posX);
 				j.setY(e.posY);

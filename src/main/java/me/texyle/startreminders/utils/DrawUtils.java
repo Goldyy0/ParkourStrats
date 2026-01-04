@@ -19,23 +19,33 @@ public class DrawUtils {
     private static final int MAX_CHARS_PER_LINE = 60;
 
     public static void drawNametag(String str) {
+        if (str == null) {
+            return;
+        }
+
         FontRenderer fontrenderer = Minecraft.getMinecraft().fontRendererObj;
         float f = 1.6F;
         float f1 = 0.016666668F * f;
+
         GlStateManager.pushMatrix();
         GL11.glNormal3f(0.0F, 1.0F, 0.0F);
+
         GlStateManager.rotate(-Minecraft.getMinecraft().getRenderManager().playerViewY, 0.0F, 1.0F, 0.0F);
         GlStateManager.scale(-f1, -f1, f1);
+
         GlStateManager.disableLighting();
         GlStateManager.depthMask(false);
         GlStateManager.disableDepth();
+
         GlStateManager.enableBlend();
         GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0);
+
         Tessellator tessellator = Tessellator.getInstance();
         WorldRenderer worldrenderer = tessellator.getWorldRenderer();
         int i = 0;
 
         int j = fontrenderer.getStringWidth(str) / 2;
+
         GlStateManager.disableTexture2D();
         worldrenderer.begin(7, DefaultVertexFormats.POSITION_COLOR);
         worldrenderer.pos(-j - 1, -1 + i, 0.0D).color(0.0F, 0.0F, 0.0F, 0.25F).endVertex();
@@ -44,21 +54,33 @@ public class DrawUtils {
         worldrenderer.pos(j + 1, -1 + i, 0.0D).color(0.0F, 0.0F, 0.0F, 0.25F).endVertex();
         tessellator.draw();
         GlStateManager.enableTexture2D();
+
         fontrenderer.drawString(str, -fontrenderer.getStringWidth(str) / 2, i, 553648127);
         GlStateManager.depthMask(true);
 
         fontrenderer.drawString(str, -fontrenderer.getStringWidth(str) / 2, i, -1);
 
         GlStateManager.enableDepth();
-        GlStateManager.enableBlend();
+        GlStateManager.disableBlend();
+        GlStateManager.enableLighting();
+        GlStateManager.depthMask(true);
         GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
+
         GlStateManager.popMatrix();
     }
 
     public static void drawNametagAtCoords(String str, int blockX, float blockY, int blockZ, float partialTicks) {
+        if (str == null) {
+            return;
+        }
+
         GlStateManager.alphaFunc(516, 0.1F);
 
         Entity viewer = Minecraft.getMinecraft().getRenderViewEntity();
+        if (viewer == null) {
+            return;
+        }
+
         double viewerX = viewer.lastTickPosX + (viewer.posX - viewer.lastTickPosX) * partialTicks;
         double viewerY = viewer.lastTickPosY + (viewer.posY - viewer.lastTickPosY) * partialTicks;
         double viewerZ = viewer.lastTickPosZ + (viewer.posZ - viewer.lastTickPosZ) * partialTicks;
@@ -83,37 +105,68 @@ public class DrawUtils {
 
     // Legacy helper kept for compatibility with BlockPos-based calls.
     public static void drawTextAtCoords(List<String> str, BlockPos loc, float partialTicks) {
+        if (loc == null) {
+            return;
+        }
         drawTextAtCoords(str, loc.getX(), loc.getY(), loc.getZ(), partialTicks);
     }
 
-    // Allows float Y so we can stack multiple strategies cleanly.
+    // Existing signature stays (no jump name header, no color)
     public static void drawTextAtCoords(List<String> str, int x, float yStart, int z, float partialTicks) {
+        drawTextAtCoordsInternal(str, null, false, null, x, yStart, z, partialTicks);
+    }
+
+    // Existing signature stays (header, no color)
+    public static void drawTextAtCoords(List<String> str, String headerLine, boolean showHeader,
+                                        int x, float yStart, int z, float partialTicks) {
+        drawTextAtCoordsInternal(str, headerLine, showHeader, null, x, yStart, z, partialTicks);
+    }
+
+    // NEW: optional text color prefix for non-header lines
+    public static void drawTextAtCoords(List<String> str, String headerLine, boolean showHeader, String textColorPrefix,
+                                        int x, float yStart, int z, float partialTicks) {
+        drawTextAtCoordsInternal(str, headerLine, showHeader, textColorPrefix, x, yStart, z, partialTicks);
+    }
+
+    private static void drawTextAtCoordsInternal(List<String> str, String headerLine, boolean showHeader,
+                                                 String textColorPrefix,
+                                                 int x, float yStart, int z, float partialTicks) {
         float lineSpacing = 0.24f;
         float y = yStart;
 
-        // Render only the minimal view, without changing how data is stored.
         List<String> displayLines = buildDisplayLines(str);
 
-        for (String s : displayLines) {
-            if (s != null && s.length() > 0) {
-                y -= lineSpacing;
-                DrawUtils.drawNametagAtCoords(s, x, y, z, partialTicks);
+        if (showHeader && headerLine != null && headerLine.trim().length() > 0) {
+            ArrayList<String> withHeader = new ArrayList<String>(displayLines.size() + 1);
+            withHeader.add(headerLine);
+            withHeader.addAll(displayLines);
+            displayLines = withHeader;
+        }
+
+        for (int i = 0; i < displayLines.size(); i++) {
+            String s = displayLines.get(i);
+            if (s == null || s.length() == 0) {
+                continue;
             }
+
+            boolean isHeaderLine = showHeader && headerLine != null && i == 0;
+
+            String out = s;
+            if (!isHeaderLine && textColorPrefix != null && !textColorPrefix.isEmpty()) {
+                out = textColorPrefix + out;
+            }
+
+            y -= lineSpacing;
+            drawNametagAtCoords(out, x, y, z, partialTicks);
         }
     }
 
     /**
      * Builds the in-world view (wrapped at MAX_CHARS_PER_LINE):
-     * - Line group 1: Position + "F:" + Facing + Setup (space-separated, smart-wrapped)
-     * - Line group 2: Strategy (wrapped if needed)
-     * - Line group 3: "Strafe:" + Strafe + "Turn:" + Turn (space-separated, smart-wrapped)
-     *
-     * This does NOT change how Reminder lines are stored, it only changes what is displayed.
-     *
-     * Supported stored formats:
-     * - New (8): [Position, Facing, Setup, Strategy, Strafe, Turn, Author, Tips]
-     * - Previous (6): [Setup, Strategy, Strafe, Turn, Author, Tips]
-     * - Legacy (<=5): [Strategy, Strafe, Turn, Author, Tips] (no Setup)
+     * - Line 1: Position + "F:" + Facing + Setup
+     * - Line 2: Strategy
+     * - Line 3: Strafe
+     * - Line 4: Turn
      */
     private static List<String> buildDisplayLines(List<String> lines) {
         ArrayList<String> out = new ArrayList<String>();
@@ -131,7 +184,6 @@ public class DrawUtils {
         int n = lines.size();
 
         if (n >= 8) {
-            // New (8)
             position = safeLine(lines, 0);
             facing = safeLine(lines, 1);
             setup = safeLine(lines, 2);
@@ -139,66 +191,44 @@ public class DrawUtils {
             strafe = safeLine(lines, 4);
             turn = safeLine(lines, 5);
         } else if (n >= 6) {
-            // Previous (6)
             setup = safeLine(lines, 0);
             strategy = safeLine(lines, 1);
             strafe = safeLine(lines, 2);
             turn = safeLine(lines, 3);
         } else {
-            // Legacy (<=5): [Strategy, Strafe, Turn, ...]
             strategy = safeLine(lines, 0);
             strafe = safeLine(lines, 1);
             turn = safeLine(lines, 2);
         }
 
-        // Group 1: Position + F:Facing + Setup (smart wrapped by segments).
-        ArrayList<String> g1Parts = new ArrayList<String>();
-        addIfNotEmpty(g1Parts, position);
-        if (!isEmpty(facing)) {
-            addIfNotEmpty(g1Parts, "F: " + facing);
-        }
-        addIfNotEmpty(g1Parts, setup);
+        ArrayList<String> g1 = new ArrayList<String>();
+        addIfNotEmpty(g1, position);
+        if (!isEmpty(facing)) addIfNotEmpty(g1, "F: " + facing);
+        addIfNotEmpty(g1, setup);
+        out.addAll(wrapBySegments(g1, MAX_CHARS_PER_LINE));
 
-        out.addAll(wrapBySegments(g1Parts, MAX_CHARS_PER_LINE));
-
-        // Group 2: Strategy (wrap if needed).
         out.addAll(wrapTextHard(strategy, MAX_CHARS_PER_LINE));
 
-        // Group 3: Strafe/Turn (smart wrapped by segments).
-        ArrayList<String> g3Parts = new ArrayList<String>();
+        ArrayList<String> g3 = new ArrayList<String>();
         if (!isEmpty(strafe)) {
-            g3Parts.add("Strafe:");
-            g3Parts.add(strafe);
+            g3.add("Strafe:");
+            g3.add(strafe);
         }
+        out.addAll(wrapBySegments(g3, MAX_CHARS_PER_LINE));
+
+        ArrayList<String> g4 = new ArrayList<String>();
         if (!isEmpty(turn)) {
-            g3Parts.add("Turn:");
-            g3Parts.add(turn);
+            g4.add("Turn:");
+            g4.add(turn);
         }
-
-        out.addAll(wrapBySegments(g3Parts, MAX_CHARS_PER_LINE));
-
-        // Remove any accidental empties.
-        for (int i = out.size() - 1; i >= 0; i--) {
-            if (out.get(i) == null || out.get(i).trim().isEmpty()) {
-                out.remove(i);
-            }
-        }
+        out.addAll(wrapBySegments(g4, MAX_CHARS_PER_LINE));
 
         return out;
     }
 
-    /**
-     * Smart wrapping by "segments" (labels) separated by a single space.
-     * If adding the next segment (including the space) would exceed maxLen,
-     * it starts a new line.
-     *
-     * If a single segment exceeds maxLen, it is hard-split into chunks.
-     */
     private static List<String> wrapBySegments(List<String> segments, int maxLen) {
         ArrayList<String> out = new ArrayList<String>();
-        if (segments == null || segments.isEmpty()) {
-            return out;
-        }
+        if (segments == null || segments.isEmpty()) return out;
 
         StringBuilder line = new StringBuilder();
 
@@ -207,7 +237,6 @@ public class DrawUtils {
             String seg = raw.trim();
             if (seg.isEmpty()) continue;
 
-            // If the segment itself is too long, flush current line and hard-split the segment.
             if (seg.length() > maxLen) {
                 if (line.length() > 0) {
                     out.add(line.toString());
@@ -219,11 +248,7 @@ public class DrawUtils {
 
             if (line.length() == 0) {
                 line.append(seg);
-                continue;
-            }
-
-            int wouldBeLen = line.length() + 1 + seg.length(); // +1 for the space
-            if (wouldBeLen > maxLen) {
+            } else if (line.length() + 1 + seg.length() > maxLen) {
                 out.add(line.toString());
                 line.setLength(0);
                 line.append(seg);
@@ -232,39 +257,25 @@ public class DrawUtils {
             }
         }
 
-        if (line.length() > 0) {
-            out.add(line.toString());
-        }
-
+        if (line.length() > 0) out.add(line.toString());
         return out;
     }
 
-    /**
-     * Hard wrap for a single text (used when a single segment is longer than maxLen,
-     * or for Strategy which is one field).
-     */
     private static List<String> wrapTextHard(String text, int maxLen) {
         ArrayList<String> out = new ArrayList<String>();
-        if (text == null) {
-            return out;
-        }
-        String t = text.trim();
-        if (t.isEmpty()) {
-            return out;
-        }
+        if (text == null) return out;
 
-        int i = 0;
-        while (i < t.length()) {
-            int end = Math.min(i + maxLen, t.length());
-            out.add(t.substring(i, end));
-            i = end;
+        String t = text.trim();
+        if (t.isEmpty()) return out;
+
+        for (int i = 0; i < t.length(); i += maxLen) {
+            out.add(t.substring(i, Math.min(i + maxLen, t.length())));
         }
         return out;
     }
 
     private static void addIfNotEmpty(List<String> parts, String s) {
-        if (parts == null) return;
-        if (s == null) return;
+        if (parts == null || s == null) return;
         String t = s.trim();
         if (!t.isEmpty()) parts.add(t);
     }
@@ -274,9 +285,7 @@ public class DrawUtils {
     }
 
     private static String safeLine(List<String> lines, int idx) {
-        if (lines == null || idx < 0 || idx >= lines.size()) {
-            return "";
-        }
+        if (lines == null || idx < 0 || idx >= lines.size()) return "";
         String s = lines.get(idx);
         return s != null ? s.trim() : "";
     }

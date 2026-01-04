@@ -20,7 +20,7 @@ import net.minecraft.util.ResourceLocation;
 
 public class GuiCreateReminder extends GuiScreen {
 
-	private static final int FIELD_WIDTH = 220;
+	protected static final int FIELD_WIDTH = 220;
 
 	private static final int COLOR_TEXT = 0xFFFFFF;
 	private static final int COLOR_INVALID_OVERLAY = 0x55FF0000;
@@ -29,7 +29,7 @@ public class GuiCreateReminder extends GuiScreen {
 
 	// New: "use player coords" icon button
 	protected static final int BTN_USE_PLAYER_COORDS = 30;
-	private static final int ICON_BTN_SIZE = 22;
+	protected static final int ICON_BTN_SIZE = 22;
 
 	// Icon texture (assets/sr/textures/gui/coords.png)
 	private static final ResourceLocation COORDS_ICON = new ResourceLocation("sr", "textures/gui/coordinates.png");
@@ -331,15 +331,15 @@ public class GuiCreateReminder extends GuiScreen {
 		return m != null && RESTORED_ID.equals(m.getId());
 	}
 
-	private int getFieldX() {
+	protected int getFieldX() {
 		return (this.width - FIELD_WIDTH) / 2;
 	}
 
-	private int getLabelX() {
+	protected int getLabelX() {
 		return getFieldX() - 70;
 	}
 
-	private int getRowY(int rowIndex) {
+	protected int getRowY(int rowIndex) {
 		int base = this.height / 15;
 		int topOffset = 1;
 		return topOffset + (base * rowIndex);

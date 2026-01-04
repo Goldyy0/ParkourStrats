@@ -28,6 +28,32 @@ public class Jump {
     // -1 means "none selected yet"
     private int activeReminderIndex = -1;
 
+    // Persisted per-jump: show jump name above strategy in-world.
+    // Boolean is required for backward compatibility with old JSON (missing field).
+    private Boolean showJumpNameInWorld;
+
+    /**
+     * Ensures the persisted field exists with an explicit value.
+     * Returns true if a missing value was initialized.
+     */
+    public boolean ensureShowJumpNameInWorldInitialized(boolean isRestoredStratsContext) {
+        if (showJumpNameInWorld == null) {
+            // Default ON for normal maps, OFF for RestoredStrats (legacy-only).
+            showJumpNameInWorld = Boolean.valueOf(!isRestoredStratsContext);
+            return true;
+        }
+        return false;
+    }
+
+    public boolean isShowJumpNameInWorld() {
+        // After normalization this is always non-null; guard is kept for safety.
+        return showJumpNameInWorld == null ? true : showJumpNameInWorld.booleanValue();
+    }
+
+    public void setShowJumpNameInWorld(boolean showJumpNameInWorld) {
+        this.showJumpNameInWorld = Boolean.valueOf(showJumpNameInWorld);
+    }
+
     public String getId() {
         return id;
     }

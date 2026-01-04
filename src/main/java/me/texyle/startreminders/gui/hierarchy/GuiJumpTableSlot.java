@@ -139,6 +139,10 @@ public class GuiJumpTableSlot extends GuiSlot {
             disableScissor();
         }
 
+        // Hide vanilla GuiSlot scrollbar (it is always drawn by super.drawScreen).
+        coverVanillaVerticalScrollbar();
+
+        // Draw our custom vertical scrollbar on top.
         drawVerticalScrollbarSkin();
     }
 
@@ -173,6 +177,25 @@ public class GuiJumpTableSlot extends GuiSlot {
         int barW = 6;
         int barRight = this.right - 2;
         return barRight - barW;
+    }
+
+    private void coverVanillaVerticalScrollbar() {
+        int visibleH = (this.bottom - this.top);
+        int totalH = getContentHeight();
+        int maxScroll = Math.max(0, totalH - visibleH);
+
+        if (maxScroll <= 0) {
+            return; // no scrollbar -> nothing to cover
+        }
+
+        int barLeft = getScrollBarX();
+        int barRight = barLeft + 6; // vanilla scrollbar width in 1.8.9 GuiSlot
+
+        // Fully opaque fill to prevent any vanilla thumb bleeding through.
+        // Pick a color that matches your panel/track. Using the same vibe as COLOR_SCROLLBAR_BG but opaque.
+        GlStateManager.disableTexture2D();
+        GlStateManager.enableBlend();
+        drawRectLocal(barLeft, this.top, barRight, this.bottom, 0xFF101010);
     }
 
     @Override

@@ -88,7 +88,28 @@ public class GuiListSlot<T> extends GuiSlot {
             disableScissor();
         }
 
+        // Hide vanilla GuiSlot scrollbar (it is always drawn by super.drawScreen).
+        coverVanillaVerticalScrollbar();
+
+        // Draw our custom vertical scrollbar on top.
         drawVerticalScrollbarSkin();
+    }
+
+    private void coverVanillaVerticalScrollbar() {
+        int visibleH = (this.bottom - this.top);
+        int totalH = getContentHeight();
+        int maxScroll = Math.max(0, totalH - visibleH);
+
+        if (maxScroll <= 0) {
+            return;
+        }
+
+        int barLeft = getScrollBarX();
+        int barRight = barLeft + 6;
+
+        GlStateManager.disableTexture2D();
+        GlStateManager.enableBlend();
+        drawRectLocal(barLeft, this.top, barRight, this.bottom, 0xFF101010);
     }
 
     private void enableScissorForSlotViewport() {

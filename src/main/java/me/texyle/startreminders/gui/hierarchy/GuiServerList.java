@@ -27,6 +27,8 @@ public class GuiServerList extends GuiScreen {
     private GuiButton removeButton;
     private GuiButton backButton;
     private final boolean allowRestoredInPicker;
+    private GuiButton textColorsButton;
+    private static final int BTN_TEXT_COLORS = 9;
 
     public GuiServerList(GuiScreen parent) {
         this(parent, null, false);
@@ -130,6 +132,19 @@ public class GuiServerList extends GuiScreen {
         backButton = new GuiButton(4, 8, 8, 60, 20, "Back");
         this.buttonList.add(backButton);
 
+        // Text Colors button (ONLY in normal mode, never in picker mode)
+        if (!isPickerMode) {
+            int w = 110;
+            int h = 20;
+            int x = this.width - 8 - w;
+            int y = 8;
+
+            textColorsButton = new GuiButton(BTN_TEXT_COLORS, x, y, w, h, "Text Colors");
+            this.buttonList.add(textColorsButton);
+        } else {
+            textColorsButton = null;
+        }
+
         // IMPORTANT:
         // In picker mode (creating a new jump context), this screen is ONLY for picking a server.
         // Hide Create/Edit/Remove completely.
@@ -212,6 +227,11 @@ public class GuiServerList extends GuiScreen {
 
         if (button.id == 4) {
             Minecraft.getMinecraft().displayGuiScreen(parent);
+            return;
+        }
+
+        if (button.id == BTN_TEXT_COLORS) {
+            Minecraft.getMinecraft().displayGuiScreen(new me.texyle.startreminders.gui.GuiTextColors(this));
             return;
         }
 

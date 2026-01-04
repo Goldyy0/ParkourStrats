@@ -13,10 +13,22 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.util.ChatComponentText;
 import net.minecraft.util.EnumChatFormatting;
+import net.minecraft.util.ResourceLocation;
+import net.minecraft.client.renderer.GlStateManager;
 
 public class GuiEditReminders extends GuiCreateReminder {
 
 	private static final String RESTORED_ID = "RestoredStrats";
+
+	private static final int BTN_TOGGLE_JUMP_NAME = 31;
+
+	// You will provide these icons (16x16) under assets/sr/textures/gui/
+	private static final ResourceLocation JUMP_NAME_VISIBLE_ICON =
+			new ResourceLocation("sr", "textures/gui/icon_visible.png");
+	private static final ResourceLocation JUMP_NAME_HIDDEN_ICON =
+			new ResourceLocation("sr", "textures/gui/icon_hidden.png");
+
+	private GuiButton toggleJumpNameButton;
 
 	// New (8): [Position, Facing, Setup, Strategy, Strafe, Turn, Author, Tips]
 	private static final int NEW_FMT_SIZE = 8;
@@ -34,6 +46,24 @@ public class GuiEditReminders extends GuiCreateReminder {
 
 	private int selectedIndex = 1;
 	private String numStr;
+
+	private ResourceLocation getJumpNameToggleIcon() {
+		boolean show = ReminderManager.isGlobalShowJumpNameEnabled();
+		return show ? JUMP_NAME_VISIBLE_ICON : JUMP_NAME_HIDDEN_ICON;
+	}
+
+	private void updateJumpNameToggleButtonState() {
+		if (toggleJumpNameButton == null) {
+			return;
+		}
+
+		boolean enabled = !isRestoredContextLocal();
+		toggleJumpNameButton.enabled = enabled;
+
+		if (toggleJumpNameButton instanceof IconSquareButton) {
+			((IconSquareButton) toggleJumpNameButton).setIcon(getJumpNameToggleIcon());
+		}
+	}
 
 	public GuiEditReminders() {
 		this(null);
@@ -121,10 +151,21 @@ public class GuiEditReminders extends GuiCreateReminder {
 		switchMenuButton.displayString = "Create menu";
 		switchMenuButton.id = 17;
 
+		// Add toggle button for showing jump name in-world (NEW editor only)
+		if (!isRestoredContextLocal()) {
+			int x = getFieldX() - ICON_BTN_SIZE - 2;  // "next to Jump:" (left of the yellow jump id text)
+			int y = getRowY(2) - 1;
+
+			ResourceLocation icon = getJumpNameToggleIcon();
+			toggleJumpNameButton = new IconSquareButton(BTN_TOGGLE_JUMP_NAME, x, y, ICON_BTN_SIZE, ICON_BTN_SIZE, icon);
+			buttonList.add(toggleJumpNameButton);
+		}
+
 		fillFieldsFromReminder();
 		updateSaveButtonState();
 		updateSelectButtonState();
 		updateUsePlayerCoordsButtonState();
+		updateJumpNameToggleButtonState();
 	}
 
 	@Override
@@ -270,6 +311,7 @@ public class GuiEditReminders extends GuiCreateReminder {
 
 		updateSelectButtonState();
 		updateUsePlayerCoordsButtonState();
+		updateJumpNameToggleButtonState();
 	}
 
 	private void updateSelectButtonState() {
@@ -317,9 +359,17 @@ public class GuiEditReminders extends GuiCreateReminder {
 
 	@Override
 	protected void actionPerformed(GuiButton button) throws IOException {
-		// New: handle coordinate sync button here because this class overrides actionPerformed
 		if (button != null && button.id == BTN_USE_PLAYER_COORDS) {
 			applyPlayerCoordsToFields();
+			return;
+		}
+
+		if (button != null && button.id == BTN_TOGGLE_JUMP_NAME) {
+			if (!isRestoredContextLocal()) {
+				boolean cur = ReminderManager.isGlobalShowJumpNameEnabled();
+				ReminderManager.setGlobalShowJumpNameEnabled(!cur);
+				updateJumpNameToggleButtonState();
+			}
 			return;
 		}
 
@@ -477,4 +527,52 @@ public class GuiEditReminders extends GuiCreateReminder {
 		Minecraft.getMinecraft().displayGuiScreen(null);
 		ReminderManager.saveToFile();
 	}
+	// Put this at the end of GuiEditReminders.java (inside the class)
+	private static final class IconSquareButton extends GuiButton {
+
+		private ResourceLocation icon;
+		private final int iconSize; // in pixels, e.g. 16
+
+		public IconSquareButton(int buttonId, int x, int y, int widthIn, int heightIn, ResourceLocation icon) {
+			super(buttonId, x, y, widthIn, heightIn, "");
+			this.icon = icon;
+			this.iconSize = 16;
+		}
+
+		public void setIcon(ResourceLocation icon) {
+			this.icon = icon;
+		}
+
+		@Override
+		public void drawButton(Minecraft mc, int mouseX, int mouseY) {
+			if (!this.visible) return;
+
+			this.hovered = mouseX >= this.xPosition && mouseY >= this.yPosition
+					&& mouseX < this.xPosition + this.width
+					&& mouseY < this.yPosition + this.height;
+
+			if (icon == null) return;
+
+			GlStateManager.pushMatrix();
+			try {
+				GlStateManager.disableLighting();
+				GlStateManager.disableDepth();
+				GlStateManager.enableBlend();
+				GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0); // standard GUI blend
+				GlStateManager.color(1f, 1f, 1f, 1f);
+
+				mc.getTextureManager().bindTexture(icon);
+
+				int ix = this.xPosition + (this.width - iconSize) / 2;
+				int iy = this.yPosition + (this.height - iconSize) / 2;
+
+				drawModalRectWithCustomSizedTexture(ix, iy, 0f, 0f, iconSize, iconSize, 16f, 16f);
+			} finally {
+				GlStateManager.disableBlend();
+				GlStateManager.enableDepth();
+				GlStateManager.popMatrix();
+			}
+		}
+	}
 }
+
