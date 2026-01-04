@@ -38,12 +38,26 @@ import net.minecraftforge.fml.common.gameevent.TickEvent;
 
 import java.util.HashSet;
 import java.util.Set;
+import net.minecraft.util.Vec3;
 
 public class ReminderManager {
 
 	// Mod settings
 	private static final String DATASET_DIR = "StratReminders/datasets";
 	private static final String SETTINGS_FILE_PATH = DATASET_DIR + "/settings.json";
+
+	public static boolean isEditPickModeInCrosshair() {
+		ensureSettingsLoaded();
+		if (settings == null) settings = new ModSettings();
+		return settings.editPickModeInCrosshair;
+	}
+
+	public static void setEditPickModeInCrosshair(boolean enabled) {
+		ensureSettingsLoaded();
+		if (settings == null) settings = new ModSettings();
+		settings.editPickModeInCrosshair = enabled;
+		saveSettingsToFile();
+	}
 
 	// -------------------------
 	// Global + Restored + Shared stores (ALWAYS loaded)
@@ -106,6 +120,21 @@ public class ReminderManager {
 
 	private static final String SHEETS_CACHE_DIR = "StratReminders/sheets_cache";
 	private static final long SHEET_AUTO_SYNC_INTERVAL_MS = 5L * 60L * 1000L;
+	private static final int SHEET_JUMP_INDEX_TOLERANCE = 20;
+
+	// Last-resort occurrence-nearest fallback tolerance (ONLY used if all other mapping fails).
+	// IMPORTANT: When this path is used, we do NOT persist sheetRowKey.
+	private static final int DUPLICATE_OCCURRENCE_NEAREST_TOLERANCE = 20;
+
+	private static class ResolvedJump {
+		final Jump jump;
+		final boolean allowBind; // true = safe to persist sheetRowKey, false = "approx/guess" mapping
+
+		ResolvedJump(Jump jump, boolean allowBind) {
+			this.jump = jump;
+			this.allowBind = allowBind;
+		}
+	}
 
 	private static long lastAutoSyncAttemptMs = 0L;
 
@@ -363,24 +392,43 @@ public class ReminderManager {
 		String lastSubSection = "";
 		String lastArea = "";
 		String lastCp = "";
+		String lastSp = "";
 
-		// Build candidate lists once (template order matters)
-		java.util.Map<String, java.util.List<Jump>> jumpsByNormName = buildJumpCandidatesByNormalizedName(map);
+		// Build candidate lists once (template order matters) + capture template indices
+		JumpIndexContext indexCtx = buildJumpIndexContext(map);
+		java.util.Map<String, java.util.List<Jump>> jumpsByNormName = indexCtx.jumpsByNormName;
+		java.util.Map<Jump, Integer> templateIndexByJump = indexCtx.templateIndexByJump;
 
-		// Occurrence counter per (context + jumpName)
+		// Assign a stable "sheet jump index" (1-based) the first time a jump-key appears in the sheet.
+		// This is jump-level order, not strategy-row order.
+		java.util.Map<String, Integer> sheetJumpIndexByKey = new java.util.HashMap<String, Integer>();
+		int nextSheetJumpIndex = 1;
+
+		// Monotonic guard: never map backwards in template order during a single sync run.
+		int lastMatchedTemplateIndex = 0;
+
+		// Occurrence counter per (context + jumpName) - increment ONLY when a new jump block starts in the sheet
 		java.util.Map<String, Integer> occurrenceByKey = new java.util.HashMap<String, Integer>();
 
 		// Optional context columns (if present in sheet)
 		int colSection = findHeaderCol(header, "section");
-		int colSubSection = findHeaderCol(header, "sub-section", "subsection", "sub section", "sub_section");
+		int colSubSection = findHeaderCol(header,
+				"sub-section", "subsection", "sub section", "sub_section",
+				"sub-sections", "subsections", "sub sections", "sub_sections"
+		);
 		int colArea = findHeaderCol(header, "area");
 		int colCp = findHeaderCol(header, "cp", "checkpoint");
+		int colSp = findHeaderCol(header, "sp", "stagepoint", "startpoint", "spawnpoint");
 
 		for (int r = 1; r < rows.size(); r++) {
 			List<String> row = rows.get(r);
 			if (row == null) continue;
 
-			String jumpName = CsvUtils.getCell(row, cols.jump).trim();
+			// Detect whether this row starts a NEW jump block (non-empty Jump cell)
+			String rawJumpCell = CsvUtils.getCell(row, cols.jump).trim();
+			boolean isNewJumpBlock = rawJumpCell.length() > 0;
+
+			String jumpName = rawJumpCell;
 			if (jumpName.isEmpty()) {
 				jumpName = lastJumpName; // carry-down for merged cells
 			} else {
@@ -425,13 +473,72 @@ public class ReminderManager {
 				cpVal = v;
 			}
 
+			String spVal = "";
+			if (colSp >= 0) {
+				String v = CsvUtils.getCell(row, colSp).trim();
+				if (v.isEmpty()) v = lastSp;
+				else lastSp = v;
+				spVal = v;
+			}
+
 			// Build a stable occurrence key using resolved (carried-down) context values
-			String key = buildOccurrenceKey(jumpName, sectionVal, subSectionVal, areaVal, cpVal);
+			String key = buildOccurrenceKey(jumpName, sectionVal, subSectionVal, areaVal, cpVal, spVal);
 
-			int occ = occurrenceByKey.containsKey(key) ? occurrenceByKey.get(key).intValue() + 1 : 1;
-			occurrenceByKey.put(key, Integer.valueOf(occ));
+			Integer sheetJumpIndexObj = sheetJumpIndexByKey.get(key);
+			if (sheetJumpIndexObj == null) {
+				sheetJumpIndexObj = Integer.valueOf(nextSheetJumpIndex);
+				sheetJumpIndexByKey.put(key, sheetJumpIndexObj);
+				nextSheetJumpIndex++;
+			}
+			int sheetJumpIndex = sheetJumpIndexObj.intValue();
 
-			Jump target = resolveJumpByNameUsingOccurrence(map, jumpName.trim(), occ, jumpsByNormName);
+			// Increment occurrence ONLY when a new jump block starts (or first time we see this key)
+			Integer occObj = occurrenceByKey.get(key);
+			int occ;
+			if (isNewJumpBlock || occObj == null) {
+				occ = (occObj != null) ? (occObj.intValue() + 1) : 1;
+				occurrenceByKey.put(key, Integer.valueOf(occ));
+			} else {
+				occ = occObj.intValue();
+			}
+
+			// Persistent jump identity: key + occurrence (stable across multiple strategy rows)
+			String sheetRowKey = key + "#" + occ;
+
+			ResolvedJump resolved = resolveJumpByNameUsingSheetRowKeyOrOccurrence(
+					map,
+					jumpName.trim(),
+					sheetRowKey,
+					occ,
+					sheetJumpIndex,
+					jumpsByNormName,
+					templateIndexByJump,
+					lastMatchedTemplateIndex,
+					SHEET_JUMP_INDEX_TOLERANCE
+			);
+
+			Jump target = (resolved != null) ? resolved.jump : null;
+
+			// Bind only when we are confident and only if the jump is not already bound to a different key.
+			if (target != null && resolved.allowBind && sheetRowKey != null && sheetRowKey.trim().length() > 0) {
+				String existingKey = target.getSheetRowKey();
+				if (existingKey.trim().isEmpty()) {
+					target.setSheetRowKey(sheetRowKey); // bind only once
+				} else if (existingKey.equals(sheetRowKey)) {
+					// ok, already bound
+				} else {
+					// do not rebind silently (prevents accidental flips)
+					// optionally: count as skipped or log
+				}
+			}
+
+			if (target != null) {
+				Integer tidx = templateIndexByJump.get(target);
+				if (tidx != null && tidx.intValue() > lastMatchedTemplateIndex) {
+					lastMatchedTemplateIndex = tidx.intValue();
+				}
+			}
+
 			if (target == null) {
 				// Requirement: do not create new jumps without coords
 				skipped++;
@@ -502,16 +609,24 @@ public class ReminderManager {
 		}
 	}
 
-	// Build candidates in template order: normalized jump name -> list of jumps
-	private static java.util.Map<String, java.util.List<Jump>> buildJumpCandidatesByNormalizedName(ParkourMap map) {
+	// Build candidates in template order + capture template indices (1-based)
+	private static JumpIndexContext buildJumpIndexContext(ParkourMap map) {
 		java.util.Map<String, java.util.List<Jump>> out = new java.util.HashMap<String, java.util.List<Jump>>();
-		if (map == null || map.getJumps() == null) return out;
+		java.util.Map<Jump, Integer> templateIndexByJump = new java.util.HashMap<Jump, Integer>();
 
+		if (map == null || map.getJumps() == null) {
+			return new JumpIndexContext(out, templateIndexByJump);
+		}
+
+		int templateIndex = 1; // 1-based to match human "ID=23" reasoning
 		for (Jump j : map.getJumps()) {
 			if (j == null) continue;
 
 			// Skip unset coords (you require coords)
 			if (j.getX() == 0 && j.getY() == 0 && j.getZ() == 0) continue;
+
+			templateIndexByJump.put(j, Integer.valueOf(templateIndex));
+			templateIndex++;
 
 			String id = j.getId() != null ? j.getId() : "";
 			String norm = CsvUtils.normalizeKey(id);
@@ -524,34 +639,126 @@ public class ReminderManager {
 			list.add(j);
 		}
 
-		return out;
+		return new JumpIndexContext(out, templateIndexByJump);
 	}
 
-	// Resolve a jump: if unique -> return; if duplicates -> use nth occurrence
-	private static Jump resolveJumpByNameUsingOccurrence(
+	private static ResolvedJump resolveJumpByNameUsingSheetRowKeyOrOccurrence(
 			ParkourMap map,
 			String jumpName,
+			String sheetRowKey,
 			int occurrence,
-			java.util.Map<String, java.util.List<Jump>> jumpsByNormName
+			int sheetJumpIndex,
+			java.util.Map<String, java.util.List<Jump>> jumpsByNormName,
+			java.util.Map<Jump, Integer> templateIndexByJump,
+			int lastMatchedTemplateIndex,
+			int tolerance
 	) {
 		if (map == null || jumpName == null) return null;
 
 		String norm = CsvUtils.normalizeKey(jumpName);
-		java.util.List<Jump> candidates = jumpsByNormName != null ? jumpsByNormName.get(norm) : null;
+		java.util.List<Jump> candidates = (jumpsByNormName != null) ? jumpsByNormName.get(norm) : null;
 		if (candidates == null || candidates.isEmpty()) {
 			return null;
 		}
 
-		if (candidates.size() == 1) {
-			return candidates.get(0);
+		// 1) Prefer persisted binding (stable even if map.getJumps() order changes)
+		if (sheetRowKey != null && sheetRowKey.trim().length() > 0) {
+			for (Jump j : candidates) {
+				if (j == null) continue;
+				if (sheetRowKey.equals(j.getSheetRowKey())) {
+					return new ResolvedJump(j, true); // safe
+				}
+			}
 		}
 
+		// 2) If only one candidate, take it
+		if (candidates.size() == 1) {
+			return new ResolvedJump(candidates.get(0), true); // safe
+		}
+
+		// 3) Primary safety mapping for duplicates:
+		//    choose the candidate with the closest template index to the sheet jump index,
+		//    constrained by tolerance and monotonicity (never go backwards in template order).
+		Jump best = null;
+		int bestDelta = Integer.MAX_VALUE;
+
+		for (Jump j : candidates) {
+			if (j == null) continue;
+			if (templateIndexByJump == null) continue;
+
+			Integer tidxObj = templateIndexByJump.get(j);
+			if (tidxObj == null) continue;
+			int templateIdx = tidxObj.intValue();
+
+			// Monotonic guard: never map backwards during this sync run.
+			if (templateIdx <= lastMatchedTemplateIndex) {
+				continue;
+			}
+
+			int delta = Math.abs(templateIdx - sheetJumpIndex);
+			if (delta > tolerance) {
+				continue;
+			}
+
+			if (delta < bestDelta) {
+				bestDelta = delta;
+				best = j;
+			}
+		}
+
+		if (best != null) {
+			return new ResolvedJump(best, true); // safe
+		}
+
+		// 4) Secondary fallback: old occurrence logic (best-effort),
+		//    BUT only if it does not violate monotonicity.
 		int idx = occurrence - 1;
 		if (idx >= 0 && idx < candidates.size()) {
-			return candidates.get(idx);
+			Jump j = candidates.get(idx);
+			if (j != null && templateIndexByJump != null) {
+				Integer tidxObj = templateIndexByJump.get(j);
+				if (tidxObj != null && tidxObj.intValue() > lastMatchedTemplateIndex) {
+					return new ResolvedJump(j, true); // safe
+				}
+			}
 		}
 
-		// If sheet has more occurrences than template, do not guess
+		// 5) LAST RESORT: nearest-by-occurrence within tolerance.
+		// Only used when the occurrence index is out of range OR monotonic occurrence mapping failed above.
+		// IMPORTANT: Do not allow persisting sheetRowKey on this "approx" mapping.
+		int targetIndex = idx;
+
+		int bestIndex = -1;
+		int bestDist = Integer.MAX_VALUE;
+		boolean tie = false;
+
+		for (int i = 0; i < candidates.size(); i++) {
+			Jump j = candidates.get(i);
+			if (j == null) continue;
+
+			// Must respect monotonic guard if we can resolve template index.
+			if (templateIndexByJump != null) {
+				Integer tidxObj = templateIndexByJump.get(j);
+				if (tidxObj != null && tidxObj.intValue() <= lastMatchedTemplateIndex) {
+					continue;
+				}
+			}
+
+			int dist = Math.abs(i - targetIndex);
+			if (dist < bestDist) {
+				bestDist = dist;
+				bestIndex = i;
+				tie = false;
+			} else if (dist == bestDist) {
+				tie = true;
+			}
+		}
+
+		if (!tie && bestIndex >= 0 && bestDist <= DUPLICATE_OCCURRENCE_NEAREST_TOLERANCE) {
+			return new ResolvedJump(candidates.get(bestIndex), false); // approx -> do NOT bind
+		}
+
+		// If we cannot map safely, skip.
 		return null;
 	}
 
@@ -644,7 +851,8 @@ public class ReminderManager {
 			String section,
 			String subSection,
 			String area,
-			String cp
+			String cp,
+			String sp
 	) {
 		StringBuilder sb = new StringBuilder();
 		sb.append(CsvUtils.normalizeKey(jumpName));
@@ -660,6 +868,9 @@ public class ReminderManager {
 		}
 		if (cp != null && !cp.trim().isEmpty()) {
 			sb.append("|CP=").append(CsvUtils.normalizeKey(cp));
+		}
+		if (sp != null && !sp.trim().isEmpty()) {
+			sb.append("|SP=").append(CsvUtils.normalizeKey(sp));
 		}
 
 		return sb.toString();
@@ -767,8 +978,7 @@ public class ReminderManager {
 			Reminder r = rs.get(i);
 			if (r == null || r.lines == null || r.lines.isEmpty()) continue;
 
-			String first = r.lines.get(0);
-			if (first != null && "PLACEHOLDER".equals(first.trim())) {
+			if (isPlaceholderReminder(r)) {
 				rs.remove(i);
 			}
 		}
@@ -778,6 +988,40 @@ public class ReminderManager {
 		} else if (j.getActiveReminderIndex() < 0 || j.getActiveReminderIndex() >= rs.size()) {
 			j.setActiveReminderIndex(0);
 		}
+	}
+
+	private static boolean isPlaceholderReminder(Reminder r) {
+		if (r == null || r.lines == null || r.lines.isEmpty()) {
+			return false;
+		}
+
+		// Legacy placeholder format: first cell (index 0)
+		String v0 = getLineTrim(r.lines, 0);
+		if ("PLACEHOLDER".equals(v0)) {
+			return true;
+		}
+
+		// New forced placeholder format: Setup (index 2)
+		String v2 = getLineTrim(r.lines, 2);
+		if ("PLACEHOLDER".equals(v2)) {
+			return true;
+		}
+
+		// Extra safety: some bad historical cases ended up in Strategy (index 3)
+		String v3 = getLineTrim(r.lines, 3);
+		if ("PLACEHOLDER".equals(v3)) {
+			return true;
+		}
+
+		// Extra safety: some bad historical cases ended up in Strafe (index 4)
+		String v4 = getLineTrim(r.lines, 4);
+        return "PLACEHOLDER".equals(v4);
+    }
+
+	private static String getLineTrim(ArrayList<String> lines, int idx) {
+		if (lines == null || idx < 0 || idx >= lines.size()) return "";
+		String s = lines.get(idx);
+		return s != null ? s.trim() : "";
 	}
 
 	private static boolean alreadyHasReminderWithExactLines(Jump j, ArrayList<String> lines) {
@@ -953,6 +1197,63 @@ public class ReminderManager {
 
 		// 3) Shared
 		renderNearbyJumpsFromStore(sharedStore, player, event);
+	}
+
+	public static Jump selectJumpInCrosshair(double maxRangeBlocks, double maxPerpDistBlocks) {
+		ensureStoresInitialized();
+
+		Minecraft mc = Minecraft.getMinecraft();
+		if (mc == null || mc.thePlayer == null) {
+			return null;
+		}
+
+		EntityPlayerSP player = mc.thePlayer;
+
+		JumpPickResult best = null;
+
+		JumpPickResult g = findBestJumpInCrosshairInStore(globalStore, player, maxRangeBlocks, maxPerpDistBlocks);
+		if (g != null && g.jump != null) {
+			best = g;
+		}
+
+		JumpPickResult r = findBestJumpInCrosshairInStore(restoredStore, player, maxRangeBlocks, maxPerpDistBlocks);
+		if (r != null && r.jump != null) {
+			if (best == null || isCrosshairPickBetter(r, best)) {
+				best = r;
+			}
+		}
+
+		JumpPickResult s = findBestJumpInCrosshairInStore(sharedStore, player, maxRangeBlocks, maxPerpDistBlocks);
+		if (s != null && s.jump != null) {
+			if (best == null || isCrosshairPickBetter(s, best)) {
+				best = s;
+			}
+		}
+
+		if (best == null || best.jump == null) {
+			return null;
+		}
+
+		selectedServer = best.server;
+		selectedMap = best.map;
+		selectedJump = best.jump;
+
+		if (selectedJump.getReminders() == null) {
+			selectedJump.setReminders(new ArrayList<Reminder>());
+		}
+
+		return selectedJump;
+	}
+
+	private static boolean isCrosshairPickBetter(JumpPickResult a, JumpPickResult b) {
+		// Prefer smaller perpendicular distance to view ray,
+		// then prefer closer along-ray distance (t).
+		if (a == null || b == null) return false;
+
+		if (a.perpDistSq < b.perpDistSq) return true;
+		if (a.perpDistSq > b.perpDistSq) return false;
+
+		return a.rayT < b.rayT;
 	}
 
 	private static boolean hasAnyStrategies() {
@@ -2345,6 +2646,104 @@ public class ReminderManager {
 		return changed;
 	}
 
+	private static JumpPickResult findBestJumpInCrosshairInStore(
+			DataStore store,
+			EntityPlayerSP player,
+			double maxRangeBlocks,
+			double maxPerpDistBlocks
+	) {
+		if (store == null || store.getServers() == null || player == null) {
+			return null;
+		}
+
+		Vec3 eye = player.getPositionEyes(1.0F);
+		Vec3 look = player.getLookVec();
+		if (eye == null || look == null) {
+			return null;
+		}
+
+		double lx = look.xCoord;
+		double ly = look.yCoord;
+		double lz = look.zCoord;
+
+		// Normalize look vector (defensive)
+		double len = Math.sqrt(lx * lx + ly * ly + lz * lz);
+		if (len <= 0.000001) {
+			return null;
+		}
+		lx /= len;
+		ly /= len;
+		lz /= len;
+
+		double maxRange = Math.max(0.0, maxRangeBlocks);
+		double maxPerp = Math.max(0.0, maxPerpDistBlocks);
+		double maxPerpSq = maxPerp * maxPerp;
+
+		JumpPickResult best = null;
+
+		for (ServerProfile s : store.getServers()) {
+			if (s == null || s.getMaps() == null) continue;
+
+			for (ParkourMap m : s.getMaps()) {
+				if (m == null || m.getJumps() == null) continue;
+
+				for (Jump j : m.getJumps()) {
+					if (j == null) continue;
+
+					int x = j.getX();
+					int y = j.getY();
+					int z = j.getZ();
+
+					if (x == 0 && y == 0 && z == 0) {
+						continue;
+					}
+
+					// Only consider jumps that actually have strategies
+					if (j.getReminders() == null || j.getReminders().isEmpty()) {
+						continue;
+					}
+
+					// Use center of block for nicer aiming
+					double jx = x + 0.5;
+					double jy = y + 0.5;
+					double jz = z + 0.5;
+
+					double tx = jx - eye.xCoord;
+					double ty = jy - eye.yCoord;
+					double tz = jz - eye.zCoord;
+
+					// Projection length along the view ray
+					double t = (tx * lx) + (ty * ly) + (tz * lz);
+
+					if (t <= 0.0 || t > maxRange) {
+						continue;
+					}
+
+					// Closest point on ray to jump point
+					double cx = eye.xCoord + (lx * t);
+					double cy = eye.yCoord + (ly * t);
+					double cz = eye.zCoord + (lz * t);
+
+					double dx = jx - cx;
+					double dy = jy - cy;
+					double dz = jz - cz;
+
+					double perpSq = (dx * dx) + (dy * dy) + (dz * dz);
+					if (perpSq > maxPerpSq) {
+						continue;
+					}
+
+					JumpPickResult cand = new JumpPickResult(s, m, j, perpSq, t);
+					if (best == null || isCrosshairPickBetter(cand, best)) {
+						best = cand;
+					}
+				}
+			}
+		}
+
+		return best;
+	}
+
 	public static Jump selectNearestJumpToPlayer() {
 		ensureStoresInitialized();
 
@@ -2405,13 +2804,43 @@ public class ReminderManager {
 		final ServerProfile server;
 		final ParkourMap map;
 		final Jump jump;
+
+		// Used by nearest selection
 		final double distSq;
 
+		// Used by crosshair selection
+		final double perpDistSq;
+		final double rayT;
+
+		// Nearest constructor
 		JumpPickResult(ServerProfile server, ParkourMap map, Jump jump, double distSq) {
 			this.server = server;
 			this.map = map;
 			this.jump = jump;
 			this.distSq = distSq;
+			this.perpDistSq = Double.MAX_VALUE;
+			this.rayT = Double.MAX_VALUE;
+		}
+
+		// Crosshair constructor
+		JumpPickResult(ServerProfile server, ParkourMap map, Jump jump, double perpDistSq, double rayT) {
+			this.server = server;
+			this.map = map;
+			this.jump = jump;
+			this.distSq = Double.MAX_VALUE;
+			this.perpDistSq = perpDistSq;
+			this.rayT = rayT;
+		}
+	}
+
+	private static class JumpIndexContext {
+		final java.util.Map<String, java.util.List<Jump>> jumpsByNormName;
+		final java.util.Map<Jump, Integer> templateIndexByJump;
+
+		JumpIndexContext(java.util.Map<String, java.util.List<Jump>> jumpsByNormName,
+						 java.util.Map<Jump, Integer> templateIndexByJump) {
+			this.jumpsByNormName = jumpsByNormName;
+			this.templateIndexByJump = templateIndexByJump;
 		}
 	}
 

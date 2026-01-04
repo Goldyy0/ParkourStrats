@@ -21,6 +21,7 @@ public class GuiEditReminders extends GuiCreateReminder {
 	private static final String RESTORED_ID = "RestoredStrats";
 
 	private static final int BTN_TOGGLE_JUMP_NAME = 31;
+	private static final int BTN_TOGGLE_PICK_MODE = 32;
 
 	// You will provide these icons (16x16) under assets/sr/textures/gui/
 	private static final ResourceLocation JUMP_NAME_VISIBLE_ICON =
@@ -38,11 +39,13 @@ public class GuiEditReminders extends GuiCreateReminder {
 	private GuiButton buttonDelete;
 
 	private GuiButton buttonSelect;
+	private GuiButton buttonPickMode;
 
 	private GuiButton backToSheetButton;
 
 	private ArrayList<Reminder> reminderList;
 	private Reminder selectedReminder;
+	private boolean abortOpen = false;
 
 	private int selectedIndex = 1;
 	private String numStr;
@@ -65,6 +68,15 @@ public class GuiEditReminders extends GuiCreateReminder {
 		}
 	}
 
+	private void updatePickModeButtonText() {
+		if (buttonPickMode == null) {
+			return;
+		}
+
+		boolean crosshair = ReminderManager.isEditPickModeInCrosshair();
+		buttonPickMode.displayString = crosshair ? "In crosshair" : "Nearest";
+	}
+
 	public GuiEditReminders() {
 		this(null);
 	}
@@ -74,15 +86,20 @@ public class GuiEditReminders extends GuiCreateReminder {
 
 		/*
 		 * Selection policy:
-		 * - Opened from keybind / GuiHandler: parentScreen == null -> ALWAYS pick nearest jump.
+		 * - Opened from keybind / GuiHandler: parentScreen == null -> pick based on mode (Nearest default).
 		 * - Opened from another GUI (e.g., Jump list double-click): keep current selected jump.
 		 */
 		if (parentScreen == null) {
-			ReminderManager.selectNearestJumpToPlayer();
+			boolean ok = pickJumpByModeForKeybindOpen();
+			if (!ok) {
+				this.abortOpen = true;
+				return;
+			}
 		} else if (ReminderManager.getSelectedJump() == null) {
 			ReminderManager.selectNearestJumpToPlayer();
 		}
 
+		// Build list from current selection
 		reminderList = new ArrayList<Reminder>(ReminderManager.getReminderList());
 		if (reminderList == null || reminderList.isEmpty()) {
 			// No strategies yet -> go to Create screen for the currently selected jump.
@@ -104,8 +121,73 @@ public class GuiEditReminders extends GuiCreateReminder {
 		selectedReminder = reminderList.get(startIdx);
 	}
 
+	private boolean pickJumpByModeForKeybindOpen() {
+		boolean crosshair = ReminderManager.isEditPickModeInCrosshair();
+		if (!crosshair) {
+			ReminderManager.selectNearestJumpToPlayer();
+			return ReminderManager.getSelectedJump() != null;
+		}
+
+		Jump picked = ReminderManager.selectJumpInCrosshair(50.0D, 1.75D);
+		if (picked == null) {
+			String str = EnumChatFormatting.DARK_AQUA + "[ParkourStrats] "
+					+ EnumChatFormatting.YELLOW + "No strategies in visible range.";
+			ChatComponentText msg = new ChatComponentText(str);
+			if (Minecraft.getMinecraft().thePlayer != null) {
+				Minecraft.getMinecraft().thePlayer.addChatMessage(msg);
+			}
+
+			// IMPORTANT: do NOT fallback to nearest. Just refuse to open.
+			return false;
+		}
+
+		return true;
+	}
+
+	private void reloadFromSelectionOrFallback(boolean announceIfNone) {
+		reminderList = new ArrayList<Reminder>(ReminderManager.getReminderList());
+		if (reminderList == null || reminderList.isEmpty()) {
+			if (announceIfNone) {
+				String str = EnumChatFormatting.DARK_AQUA + "[ParkourStrats] "
+						+ EnumChatFormatting.YELLOW + "No strategies in visible range.";
+				ChatComponentText msg = new ChatComponentText(str);
+				if (Minecraft.getMinecraft().thePlayer != null) {
+					Minecraft.getMinecraft().thePlayer.addChatMessage(msg);
+				}
+			}
+
+			// If we ended up with empty list, fallback to nearest and try again
+			ReminderManager.selectNearestJumpToPlayer();
+			reminderList = new ArrayList<Reminder>(ReminderManager.getReminderList());
+			if (reminderList == null || reminderList.isEmpty()) {
+				Minecraft.getMinecraft().displayGuiScreen(new GuiCreateReminder(parentScreen));
+				return;
+			}
+		}
+
+		Jump jump = ReminderManager.getSelectedJump();
+		int startIdx = 0;
+		if (jump != null) {
+			int active = jump.getActiveReminderIndex();
+			if (active >= 0 && active < reminderList.size()) {
+				startIdx = active;
+			}
+		}
+
+		selectedIndex = startIdx + 1;
+		numStr = selectedIndex + "/" + reminderList.size();
+		selectedReminder = reminderList.get(startIdx);
+
+		fillFieldsFromReminder();
+	}
+
 	@Override
 	public void initGui() {
+		if (abortOpen) {
+			Minecraft.getMinecraft().displayGuiScreen(null);
+			return;
+		}
+
 		super.initGui();
 
 		if (reminderList == null || reminderList.isEmpty()) {
@@ -143,6 +225,13 @@ public class GuiEditReminders extends GuiCreateReminder {
 		buttonSelect = new GuiButton(14, selectX, selectY, "Select");
 		buttonSelect.setWidth(selectW);
 		buttonList.add(buttonSelect);
+
+		// New: pick-mode toggle under Select
+		int modeY = selectY + 24;
+		buttonPickMode = new GuiButton(BTN_TOGGLE_PICK_MODE, selectX, modeY, "");
+		buttonPickMode.setWidth(selectW);
+		buttonList.add(buttonPickMode);
+		updatePickModeButtonText();
 
 		// Move Delete near bottom, above Save (so it never overlaps)
 		buttonDelete = new GuiButton(13, saveButton.xPosition, this.height - 52, EnumChatFormatting.RED + "Delete");
@@ -198,6 +287,11 @@ public class GuiEditReminders extends GuiCreateReminder {
 
 	@Override
 	public void drawScreen(int mouseX, int mouseY, float partialTicks) {
+		if (abortOpen) {
+			Minecraft.getMinecraft().displayGuiScreen(null);
+			return;
+		}
+
 		if (reminderList == null || reminderList.isEmpty()) {
 			Minecraft.getMinecraft().displayGuiScreen(new GuiCreateReminder(parentScreen));
 			return;
@@ -312,6 +406,7 @@ public class GuiEditReminders extends GuiCreateReminder {
 		updateSelectButtonState();
 		updateUsePlayerCoordsButtonState();
 		updateJumpNameToggleButtonState();
+		updatePickModeButtonText();
 	}
 
 	private void updateSelectButtonState() {
@@ -370,6 +465,17 @@ public class GuiEditReminders extends GuiCreateReminder {
 				ReminderManager.setGlobalShowJumpNameEnabled(!cur);
 				updateJumpNameToggleButtonState();
 			}
+			return;
+		}
+
+		if (button != null && button.id == BTN_TOGGLE_PICK_MODE) {
+			boolean cur = ReminderManager.isEditPickModeInCrosshair();
+			boolean next = !cur;
+			ReminderManager.setEditPickModeInCrosshair(next);
+
+			// IMPORTANT: Do not auto-pick anything while already inside the menu.
+			// This toggle only changes the mode for the NEXT time the menu is opened via keybind.
+			updatePickModeButtonText();
 			return;
 		}
 
@@ -527,6 +633,7 @@ public class GuiEditReminders extends GuiCreateReminder {
 		Minecraft.getMinecraft().displayGuiScreen(null);
 		ReminderManager.saveToFile();
 	}
+
 	// Put this at the end of GuiEditReminders.java (inside the class)
 	private static final class IconSquareButton extends GuiButton {
 
@@ -575,4 +682,3 @@ public class GuiEditReminders extends GuiCreateReminder {
 		}
 	}
 }
-

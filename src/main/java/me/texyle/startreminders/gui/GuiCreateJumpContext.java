@@ -392,8 +392,15 @@ public class GuiCreateJumpContext extends GuiScreen {
             return;
         }
 
-        ArrayList<String> lines = new ArrayList<String>();
-        lines.add(PLACEHOLDER_TEXT);
+        ArrayList<String> lines = new ArrayList<String>(8);
+
+        // New format (8): [Position, Facing, Setup, Strategy, Strafe, Turn, Author, Tips]
+        for (int i = 0; i < 8; i++) {
+            lines.add("");
+        }
+
+        // Force placeholder into Setup only (index 2)
+        lines.set(2, PLACEHOLDER_TEXT);
 
         Reminder r = new Reminder(lines);
         j.getReminders().add(r);

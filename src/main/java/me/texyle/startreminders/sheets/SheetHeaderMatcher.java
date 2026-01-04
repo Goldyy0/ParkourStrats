@@ -18,10 +18,14 @@ public final class SheetHeaderMatcher {
         public int turn = -1;
         public int author = -1;
         public int tips = -1;
+
         public int section = -1;
         public int subsection = -1;
         public int area = -1;
         public int cp = -1;
+
+        // Optional
+        public int sp = -1;
     }
 
     private static String norm(String s) {
@@ -47,25 +51,33 @@ public final class SheetHeaderMatcher {
             String key = norm(headerRow.get(i));
             if (key.isEmpty()) continue;
 
-            // Keep the first occurrence to avoid unstable behavior if duplicate columns exist.
+            // Keep first occurrence only
             if (!indexByNorm.containsKey(key)) {
-                indexByNorm.put(key, i);
+                indexByNorm.put(key, Integer.valueOf(i));
             }
         }
 
         cols.jump = first(indexByNorm, "jump", "jumpname", "jumpid", "name", "jumptitle");
         cols.position = first(indexByNorm, "position", "pos", "coords", "coordinate", "location");
-        cols.facing = first(indexByNorm, "facing", "face", "direction", "yaw", "angle");
+        cols.facing = first(indexByNorm, "facing", "face", "direction", "f", "f:", "angle");
         cols.setup = first(indexByNorm, "setup", "set", "prep", "preparation");
         cols.strategy = first(indexByNorm, "strategy", "strat", "main", "plan", "method");
         cols.strafe = first(indexByNorm, "strafe", "strafing", "strafeinput");
         cols.turn = first(indexByNorm, "turn", "rotation", "rotate", "turning");
         cols.author = first(indexByNorm, "author", "by", "creator", "madeby");
         cols.tips = first(indexByNorm, "tips", "tip", "notes", "note", "comments", "comment", "remark", "remarks");
+
         cols.section = first(indexByNorm, "section");
-        cols.subsection = first(indexByNorm, "subsection", "sub-section", "subsectionname", "sub");
+        cols.subsection = first(indexByNorm,
+                "subsection", "subsectionname", "sub",
+                "subsections", "subsectionsname",
+                "subsections", "subsectionsname"
+        );
         cols.area = first(indexByNorm, "area");
         cols.cp = first(indexByNorm, "cp", "checkpoint", "check");
+
+        // Optional: SP variants
+        cols.sp = first(indexByNorm, "sp", "stagepoint", "startpoint", "spawnpoint");
 
         return cols;
     }

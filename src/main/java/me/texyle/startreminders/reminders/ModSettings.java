@@ -9,4 +9,8 @@ public class ModSettings {
     // Defaults: jump name = aqua (§b), text = white (§f).
     public String inWorldJumpNameColor = "\u00A7b";
     public String inWorldTextColor = "\u00A7f";
+
+    // Edit menu jump pick mode:
+    // false = Nearest (default), true = In crosshair
+    public boolean editPickModeInCrosshair = false;
 }
