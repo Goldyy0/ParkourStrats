@@ -30,7 +30,7 @@ public class GuiMapList extends GuiScreen {
     private static final int BTN_SYNC_SHEET = 5;
     private static final int BTN_EXPORT_TEMPLATE = 6;
     private static final int BTN_IMPORT_TEMPLATE = 7;
-    private static final int BTN_STOP_SYNC = 8;
+    private static final int BTN_UPDATE_SYNC = 8;
 
     private final GuiScreen parent;
     private final ServerProfile server;
@@ -47,7 +47,7 @@ public class GuiMapList extends GuiScreen {
     private GuiButton syncSheetButton;
     private GuiButton exportTemplateButton;
     private GuiButton importTemplateButton;
-    private GuiButton stopSyncButton;
+    private GuiButton updateSyncButton;
 
     public GuiMapList(GuiScreen parent, ServerProfile server) {
         this(parent, server, null);
@@ -132,9 +132,9 @@ public class GuiMapList extends GuiScreen {
             syncSheetButton = new GuiButton(BTN_SYNC_SHEET, createButton.xPosition - 104, createButton.yPosition, 100, 20, "Sync Sheet");
             this.buttonList.add(syncSheetButton);
 
-            // Stop Sync button (right of Remove)
-            stopSyncButton = new GuiButton(BTN_STOP_SYNC, removeButton.xPosition + removeButton.width + 8, removeButton.yPosition, 100, 20, "Stop Sync");
-            this.buttonList.add(stopSyncButton);
+            // Update Sync button (right of Remove)
+            updateSyncButton = new GuiButton(BTN_UPDATE_SYNC, removeButton.xPosition + removeButton.width + 8, removeButton.yPosition, 100, 20, "Update Sync");
+            this.buttonList.add(updateSyncButton);
 
             // Layout:
             // - Import Template: top-left, right next to Back
@@ -161,7 +161,7 @@ public class GuiMapList extends GuiScreen {
             removeButton = null;
 
             syncSheetButton = null;
-            stopSyncButton = null;
+            updateSyncButton = null;
             exportTemplateButton = null;
             importTemplateButton = null;
         }
@@ -192,8 +192,8 @@ public class GuiMapList extends GuiScreen {
             syncSheetButton.enabled = hasSelection;
         }
 
-        if (stopSyncButton != null) {
-            stopSyncButton.enabled = (selected != null && selected.hasSheetConfigured());
+        if (updateSyncButton != null) {
+            updateSyncButton.enabled = (selected != null && selected.hasSheetConfigured());
         }
 
         if (exportTemplateButton != null) {
@@ -285,16 +285,13 @@ public class GuiMapList extends GuiScreen {
             return;
         }
 
-        if (button.id == BTN_STOP_SYNC) {
+        if (button.id == BTN_UPDATE_SYNC) {
             if (selected == null) {
                 return;
             }
 
-            ReminderManager.stopSheetSyncForMap(server, selected);
-
-            sendClientChat(EnumChatFormatting.DARK_AQUA + "[ParkourStrats] " + EnumChatFormatting.AQUA
-                    + "Sync stopped for map: " + selected.getId());
-
+            // Manual sync trigger (no auto-sync anymore)
+            ReminderManager.requestSheetSyncForMap(server, selected, true);
             initGui();
             return;
         }

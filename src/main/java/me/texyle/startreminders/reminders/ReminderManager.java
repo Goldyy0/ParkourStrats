@@ -34,7 +34,6 @@ import java.util.List;
 import me.texyle.startreminders.sheets.CsvUtils;
 import me.texyle.startreminders.sheets.SheetHeaderMatcher;
 import me.texyle.startreminders.sheets.SheetSyncManager;
-import net.minecraftforge.fml.common.gameevent.TickEvent;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -119,7 +118,6 @@ public class ReminderManager {
 	private static final Set<String> sheetSyncAnnouncedKeys = new HashSet<String>();
 
 	private static final String SHEETS_CACHE_DIR = "StratReminders/sheets_cache";
-	private static final long SHEET_AUTO_SYNC_INTERVAL_MS = 5L * 60L * 1000L;
 	private static final int SHEET_JUMP_INDEX_TOLERANCE = 20;
 
 	// Last-resort occurrence-nearest fallback tolerance (ONLY used if all other mapping fails).
@@ -135,8 +133,6 @@ public class ReminderManager {
 			this.allowBind = allowBind;
 		}
 	}
-
-	private static long lastAutoSyncAttemptMs = 0L;
 
 	// -------------------------
 	// World / network lifecycle
@@ -177,28 +173,6 @@ public class ReminderManager {
 			saveToFile();
 		} catch (Exception ignored) {
 		}
-	}
-
-	@SubscribeEvent
-	public void onClientTick(TickEvent.ClientTickEvent event) {
-		if (event == null || event.phase != TickEvent.Phase.END) {
-			return;
-		}
-
-		ensureStoresInitialized();
-
-		long now = System.currentTimeMillis();
-		if (now - lastAutoSyncAttemptMs < SHEET_AUTO_SYNC_INTERVAL_MS) {
-			return;
-		}
-		lastAutoSyncAttemptMs = now;
-
-		// Auto-sync only the currently selected map (no "sync all")
-		if (selectedMap == null || !selectedMap.hasSheetConfigured()) {
-			return;
-		}
-
-		requestSheetSyncForMap(selectedServer, selectedMap, false);
 	}
 
 	public static void setSheetUrlForMap(ParkourMap map, String url) {
