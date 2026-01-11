@@ -6,11 +6,18 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.FileInputStream;
+import java.util.Map;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonSyntaxException;
 import com.google.gson.reflect.TypeToken;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import me.texyle.startreminders.StratReminders;
 import me.texyle.startreminders.data.DataStore;
@@ -34,6 +41,7 @@ import java.util.List;
 import me.texyle.startreminders.sheets.CsvUtils;
 import me.texyle.startreminders.sheets.SheetHeaderMatcher;
 import me.texyle.startreminders.sheets.SheetSyncManager;
+import me.texyle.startreminders.sheets.SheetJumpNameExtractor;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -109,6 +117,17 @@ public class ReminderManager {
 	private static final long LEGACY_MISSING_CHAT_COOLDOWN_MS = 2500L;
 	private static long lastLegacyImportRunMs = 0L;
 	private static final long LEGACY_IMPORT_DOUBLE_TRIGGER_GUARD_MS = 600L;
+
+	// -------------------------
+	// BetterLinkCraft import guards
+	// -------------------------
+
+	private static boolean blcImportInProgress = false;
+	private static long lastBlcImportRunMs = 0L;
+	private static final long BLC_IMPORT_DOUBLE_TRIGGER_GUARD_MS = 600L;
+
+	private static long lastBlcMissingChatMs = 0L;
+	private static final long BLC_MISSING_CHAT_COOLDOWN_MS = 2500L;
 
 	// -------------------------
 	// Google Sheets sync
@@ -734,6 +753,215 @@ public class ReminderManager {
 
 		// If we cannot map safely, skip.
 		return null;
+	}
+
+	// -------------------------
+	// Placeholder jump-name sync (CreateJumpContext helper)
+	// -------------------------
+
+	public interface IPlaceholderJumpSyncCallback {
+		void onSuccess(int count);
+		void onError(String errorMessage);
+	}
+
+	private static final String PLACEHOLDER_SHEETS_CACHE_FILE = "StratReminders/sheets_cache/placeholder_jumps.csv";
+
+	// Runtime cache: we persist only URL/index/enabled in ParkourMap; the list is kept in memory.
+	private static java.util.List<String> placeholderJumpNames = new java.util.ArrayList<String>();
+
+	public static boolean isAnySheetSyncInProgress() {
+		return SheetSyncManager.isSyncInProgress();
+	}
+
+	public static boolean isPlaceholderSyncEnabledForSelectedMap() {
+		ensureStoresInitialized();
+		ParkourMap map = selectedMap;
+		return map != null && map.isPlaceholderSyncEnabled() && placeholderJumpNames != null && !placeholderJumpNames.isEmpty();
+	}
+
+	public static int getPlaceholderJumpCount() {
+		if (placeholderJumpNames == null) return 0;
+		return placeholderJumpNames.size();
+	}
+
+	public static int getPlaceholderJumpIndex() {
+		ensureStoresInitialized();
+		ParkourMap map = selectedMap;
+		if (map == null) return 0;
+
+		int idx = map.getPlaceholderJumpIndex();
+		int count = getPlaceholderJumpCount();
+		if (count <= 0) return 0;
+
+		if (idx < 0) idx = 0;
+		if (idx >= count) idx = count - 1;
+		map.setPlaceholderJumpIndex(idx);
+		return idx;
+	}
+
+	public static String getCurrentPlaceholderJumpName() {
+		if (!isPlaceholderSyncEnabledForSelectedMap()) return "";
+		int idx = getPlaceholderJumpIndex();
+		if (placeholderJumpNames == null || placeholderJumpNames.isEmpty()) return "";
+		if (idx < 0 || idx >= placeholderJumpNames.size()) return "";
+		String s = placeholderJumpNames.get(idx);
+		return s != null ? s : "";
+	}
+
+	public static void prevPlaceholderJump() {
+		ensureStoresInitialized();
+		ParkourMap map = selectedMap;
+		if (map == null) return;
+		if (!map.isPlaceholderSyncEnabled()) return;
+
+		int count = getPlaceholderJumpCount();
+		if (count <= 0) return;
+
+		int idx = getPlaceholderJumpIndex();
+		idx--;
+		if (idx < 0) idx = 0;
+		map.setPlaceholderJumpIndex(idx);
+		saveToFile();
+	}
+
+	public static void nextPlaceholderJump() {
+		ensureStoresInitialized();
+		ParkourMap map = selectedMap;
+		if (map == null) return;
+		if (!map.isPlaceholderSyncEnabled()) return;
+
+		int count = getPlaceholderJumpCount();
+		if (count <= 0) return;
+
+		int idx = getPlaceholderJumpIndex();
+		idx++;
+		if (idx >= count) idx = count - 1;
+		map.setPlaceholderJumpIndex(idx);
+		saveToFile();
+	}
+
+	/**
+	 * Called after "Create placeholder" is used, so next time the GUI opens
+	 * the next jump name is prefilled.
+	 */
+	public static void advancePlaceholderAfterCreate() {
+		ensureStoresInitialized();
+		ParkourMap map = selectedMap;
+		if (map == null) return;
+		if (!map.isPlaceholderSyncEnabled()) return;
+
+		int count = getPlaceholderJumpCount();
+		if (count <= 0) return;
+
+		int idx = getPlaceholderJumpIndex();
+		idx++;
+		if (idx >= count) idx = count - 1; // clamp at end
+		map.setPlaceholderJumpIndex(idx);
+		saveToFile();
+	}
+
+	/**
+	 * Enables placeholder sync for a given map and persists the URL/index/enabled state.
+	 * The actual list is fetched by requestPlaceholderJumpListSync(...).
+	 */
+	public static void enablePlaceholderSyncForMap(ParkourMap map, String url) {
+		ensureStoresInitialized();
+		if (map == null) return;
+
+		String trimmed = url != null ? url.trim() : "";
+		map.setPlaceholderSheetUrl(trimmed);
+		map.setPlaceholderSyncEnabled(true);
+
+		// Keep index within range later when list is loaded
+		if (map.getPlaceholderJumpIndex() < 0) {
+			map.setPlaceholderJumpIndex(0);
+		}
+
+		saveToFile();
+	}
+
+	public static void disablePlaceholderSyncForMap(ParkourMap map) {
+		ensureStoresInitialized();
+		if (map == null) return;
+
+		map.setPlaceholderSyncEnabled(false);
+		map.setPlaceholderSheetUrl("");
+		map.setPlaceholderJumpIndex(0);
+
+		placeholderJumpNames = new java.util.ArrayList<String>();
+
+		saveToFile();
+	}
+
+	/**
+	 * Downloads CSV from placeholderSheetUrl and extracts jump names in sheet order.
+	 * Stores the list in runtime cache and keeps map index clamped.
+	 */
+	public static void requestPlaceholderJumpListSync(ParkourMap map, IPlaceholderJumpSyncCallback cb) {
+		ensureStoresInitialized();
+
+		if (map == null) {
+			if (cb != null) cb.onError("No map selected.");
+			return;
+		}
+
+		if (!map.isPlaceholderSyncEnabled()) {
+			if (cb != null) cb.onError("Placeholder sync is not enabled.");
+			return;
+		}
+
+		final String url = map.getPlaceholderSheetUrl();
+		if (url == null || url.trim().isEmpty()) {
+			if (cb != null) cb.onError("No placeholder sheet URL configured.");
+			return;
+		}
+
+		if (SheetSyncManager.isSyncInProgress()) {
+			if (cb != null) cb.onError("Sync already in progress.");
+			return;
+		}
+
+		// forcedGid = -1 (SheetUrlUtils can derive gid if present; otherwise export default)
+		SheetSyncManager.fetchCsvAsync(url, -1, PLACEHOLDER_SHEETS_CACHE_FILE, new SheetSyncManager.ISyncCallback() {
+			@Override
+			public void onSuccess(String csvText, String cachePath) {
+				Minecraft.getMinecraft().addScheduledTask(new Runnable() {
+					@Override
+					public void run() {
+						try {
+							java.util.List<String> names = SheetJumpNameExtractor.extractJumpNames(csvText);
+							if (names == null || names.isEmpty()) {
+								if (cb != null) cb.onError("No jump names found in CSV.");
+								return;
+							}
+
+							placeholderJumpNames = new java.util.ArrayList<String>(names);
+
+							// Clamp saved index
+							int idx = map.getPlaceholderJumpIndex();
+							if (idx < 0) idx = 0;
+							if (idx >= placeholderJumpNames.size()) idx = placeholderJumpNames.size() - 1;
+							map.setPlaceholderJumpIndex(idx);
+							saveToFile();
+
+							if (cb != null) cb.onSuccess(placeholderJumpNames.size());
+						} catch (Exception ex) {
+							if (cb != null) cb.onError("Failed to parse CSV.");
+						}
+					}
+				});
+			}
+
+			@Override
+			public void onError(String errorMessage) {
+				Minecraft.getMinecraft().addScheduledTask(new Runnable() {
+					@Override
+					public void run() {
+						if (cb != null) cb.onError(errorMessage != null ? errorMessage : "Failed to download CSV.");
+					}
+				});
+			}
+		});
 	}
 
 	public static void exportMapTemplateToFile(ServerProfile server, ParkourMap map, File file) throws IOException {
@@ -3032,6 +3260,234 @@ public class ReminderManager {
 			return false;
 		} finally {
 			legacyImportInProgress = false;
+		}
+	}
+
+	public static boolean insertBetterLinkCraftFileIntoRestoredStrats() {
+		ensureStoresInitialized();
+
+		long nowMs = System.currentTimeMillis();
+		if (nowMs - lastBlcImportRunMs < BLC_IMPORT_DOUBLE_TRIGGER_GUARD_MS) {
+			// Ignore fast duplicate calls (prevents double triggering).
+			return false;
+		}
+		lastBlcImportRunMs = nowMs;
+
+		if (blcImportInProgress) {
+			return false;
+		}
+
+		blcImportInProgress = true;
+		try {
+			File f = getBetterLinkCraftFile();
+			if (f == null || !f.exists() || !f.isFile()) {
+				sendBlcErrorOnce("BetterLinkCraft file not found: BetterLinkCraft/StratReminders.json");
+				return false;
+			}
+
+			String jsonText;
+			try {
+				jsonText = readFileUtf8(f);
+			} catch (Exception ex) {
+				sendBlcErrorOnce("Failed to read BetterLinkCraft file: BetterLinkCraft/StratReminders.json");
+				return false;
+			}
+
+			if (jsonText == null || jsonText.trim().isEmpty()) {
+				sendBlcErrorOnce("BetterLinkCraft file is empty: BetterLinkCraft/StratReminders.json");
+				return false;
+			}
+
+			JsonElement rootEl;
+			try {
+				rootEl = new JsonParser().parse(jsonText);
+			} catch (Exception ex) {
+				sendBlcErrorOnce("BetterLinkCraft file is not valid JSON: BetterLinkCraft/StratReminders.json");
+				return false;
+			}
+
+			if (rootEl == null || !rootEl.isJsonObject()) {
+				sendBlcErrorOnce("BetterLinkCraft JSON must be an object: BetterLinkCraft/StratReminders.json");
+				return false;
+			}
+
+			ParkourMap restoredMap = getRestoredMap();
+			if (restoredMap == null) {
+				sendBlcErrorOnce("RestoredStrats map is not available.");
+				return false;
+			}
+			if (restoredMap.getJumps() == null) {
+				restoredMap.setJumps(new ArrayList<Jump>());
+			}
+
+			JsonObject root = rootEl.getAsJsonObject();
+
+			int imported = 0;
+			int skipped = 0;
+
+			for (Map.Entry<String, JsonElement> groupEntry : root.entrySet()) {
+				String groupName = (groupEntry.getKey() != null) ? groupEntry.getKey().trim() : "";
+				if (groupName.isEmpty()) {
+					continue;
+				}
+
+				JsonElement arrEl = groupEntry.getValue();
+				if (arrEl == null || !arrEl.isJsonArray()) {
+					continue;
+				}
+
+				int ordinal = 0;
+
+				for (JsonElement itemEl : arrEl.getAsJsonArray()) {
+					if (itemEl == null || !itemEl.isJsonObject()) {
+						skipped++;
+						continue;
+					}
+
+					JsonObject obj = itemEl.getAsJsonObject();
+					ordinal++;
+
+					String jumpName = groupName + ordinal;
+
+					int x = getIntSafe(obj, "x", 0);
+					int y = getIntSafe(obj, "y", 0);
+					int z = getIntSafe(obj, "z", 0);
+
+					// Same coords rule as legacy import: if coords already exist in RestoredStrats, treat as already imported.
+					if (looksAlreadyImportedByCoords(restoredMap, x, y, z)) {
+						skipped++;
+						continue;
+					}
+
+					String position = getStringSafe(obj, "position");
+					String facing = getStringSafe(obj, "facing");
+					String setup = getStringSafe(obj, "setup");
+					String input = getStringSafe(obj, "input");
+					String comment = getStringSafe(obj, "comment");
+
+					Jump j = new Jump();
+					j.setShowJumpNameInWorld(false);
+					j.setId(jumpName);
+					j.setX(x);
+					j.setY(y);
+					j.setZ(z);
+
+					ArrayList<String> lines = new ArrayList<String>(8);
+					for (int i = 0; i < 8; i++) lines.add("");
+
+					lines.set(0, position);
+					lines.set(1, facing);
+					lines.set(2, setup);
+					lines.set(3, input);     // Strategy column
+					lines.set(7, comment);   // Tips column
+
+					ArrayList<Reminder> rs = new ArrayList<Reminder>();
+					rs.add(new Reminder(lines));
+					j.setReminders(rs);
+					j.setActiveReminderIndex(0);
+
+					restoredMap.getJumps().add(j);
+					imported++;
+				}
+			}
+
+			if (imported > 0) {
+				saveToFile();
+			}
+
+			sendBlcInfo("BetterLinkCraft import completed. Imported: " + imported + ", skipped: " + skipped + ".");
+			return imported > 0;
+
+		} catch (Exception ex) {
+			sendBlcErrorOnce("Unexpected error during BetterLinkCraft import. See logs for details.");
+			ex.printStackTrace();
+			return false;
+		} finally {
+			blcImportInProgress = false;
+		}
+	}
+
+	private static File getBetterLinkCraftFile() {
+		Minecraft mc = Minecraft.getMinecraft();
+		if (mc == null) {
+			return new File("BetterLinkCraft/StratReminders.json");
+		}
+		File mcDir = mc.mcDataDir;
+		return new File(new File(mcDir, "BetterLinkCraft"), "StratReminders.json");
+	}
+
+	private static void sendBlcErrorOnce(String msg) {
+		long now = System.currentTimeMillis();
+		if (now - lastBlcMissingChatMs < BLC_MISSING_CHAT_COOLDOWN_MS) {
+			return;
+		}
+		lastBlcMissingChatMs = now;
+		sendChat(Minecraft.getMinecraft(),
+				EnumChatFormatting.DARK_AQUA + "[ParkourStrats] " + EnumChatFormatting.RED + msg);
+	}
+
+	private static void sendBlcInfo(String msg) {
+		sendChat(Minecraft.getMinecraft(),
+				EnumChatFormatting.DARK_AQUA + "[ParkourStrats] " + EnumChatFormatting.AQUA + msg);
+	}
+
+	private static boolean looksAlreadyImportedByCoords(ParkourMap restoredMap, int x, int y, int z) {
+		if (restoredMap == null || restoredMap.getJumps() == null) return false;
+
+		for (Jump j : restoredMap.getJumps()) {
+			if (j == null) continue;
+			if (j.getX() == x && j.getY() == y && j.getZ() == z) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static String readFileUtf8(File f) throws Exception {
+		FileInputStream fis = null;
+		BufferedInputStream bis = null;
+
+		try {
+			fis = new FileInputStream(f);
+			bis = new BufferedInputStream(fis);
+
+			ByteArrayOutputStream out = new ByteArrayOutputStream();
+			byte[] buf = new byte[4096];
+			int n;
+
+			while ((n = bis.read(buf)) > 0) {
+				out.write(buf, 0, n);
+			}
+
+			return new String(out.toByteArray(), "UTF-8");
+		} finally {
+			try { if (bis != null) bis.close(); } catch (Exception ignored) {}
+			try { if (fis != null) fis.close(); } catch (Exception ignored) {}
+		}
+	}
+
+	private static String getStringSafe(JsonObject obj, String key) {
+		try {
+			if (obj == null || key == null) return "";
+			JsonElement el = obj.get(key);
+			if (el == null || el.isJsonNull()) return "";
+			if (!el.isJsonPrimitive()) return "";
+			String s = el.getAsString();
+			return s != null ? s : "";
+		} catch (Exception ignored) {
+			return "";
+		}
+	}
+
+	private static int getIntSafe(JsonObject obj, String key, int def) {
+		try {
+			if (obj == null || key == null) return def;
+			JsonElement el = obj.get(key);
+			if (el == null || el.isJsonNull()) return def;
+			if (!el.isJsonPrimitive()) return def;
+			return el.getAsInt();
+		} catch (Exception ignored) {
+			return def;
 		}
 	}
 

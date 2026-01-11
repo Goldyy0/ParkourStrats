@@ -121,6 +121,17 @@ public class GuiEditReminders extends GuiCreateReminder {
 		selectedReminder = reminderList.get(startIdx);
 	}
 
+	private static boolean isBlank(String s) {
+		return s == null || s.trim().isEmpty();
+	}
+
+	private static boolean isBetterLcEightLine(ArrayList<String> lines) {
+		if (lines == null || lines.size() < NEW_FMT_SIZE) return false;
+
+		// BetterLC: Position/Facing are meaningful (at least one non-empty)
+		return !isBlank(getLineSafe(lines, 0)) || !isBlank(getLineSafe(lines, 1));
+	}
+
 	private boolean pickJumpByModeForKeybindOpen() {
 		boolean crosshair = ReminderManager.isEditPickModeInCrosshair();
 		if (!crosshair) {
@@ -330,14 +341,34 @@ public class GuiEditReminders extends GuiCreateReminder {
 			boolean isNewFormat = (lines != null && lines.size() >= NEW_FMT_SIZE);
 
 			if (isNewFormat) {
-				// Line 1..5 -> Setup/Strategy/Strafe/Turn/Tips
-				textLine1.setText(getLineSafe(lines, 2));
-				textLine2.setText(getLineSafe(lines, 3));
-				textLine3.setText(getLineSafe(lines, 4));
-				textLine4.setText(getLineSafe(lines, 5));
-				textLine5.setText(getLineSafe(lines, 7));
+				/*
+				 * RestoredStrats can contain TWO kinds of 8-line data:
+				 * 1) BetterLC 8-line: [Position, Facing, Setup, Strategy(Input), Strafe, Turn, Author, Tips(Comment)]
+				 * 2) Legacy-normalized 8-line (converted from old formats): Position/Facing typically empty.
+				 *
+				 * If Position/Facing are empty -> treat as legacy-normalized and show from Setup so it starts at Line 1.
+				 */
+				boolean betterLc = isBetterLcEightLine(lines);
+
+				if (betterLc) {
+					// BetterLC display mapping:
+					// Line1=Position(0), Line2=Facing(1), Line3=Setup(2), Line4=Input(3), Line5=Comment(7)
+					textLine1.setText(getLineSafe(lines, 0)); // Position
+					textLine2.setText(getLineSafe(lines, 1)); // Facing
+					textLine3.setText(getLineSafe(lines, 2)); // Setup
+					textLine4.setText(getLineSafe(lines, 3)); // Input (Strategy)
+					textLine5.setText(getLineSafe(lines, 7)); // Comment (Tips)
+				} else {
+					// Legacy-normalized 8-line display mapping (start at Setup):
+					// Line1=Setup(2), Line2=Strategy(3), Line3=Strafe(4), Line4=Turn(5), Line5=Tips(7)
+					textLine1.setText(getLineSafe(lines, 2));
+					textLine2.setText(getLineSafe(lines, 3));
+					textLine3.setText(getLineSafe(lines, 4));
+					textLine4.setText(getLineSafe(lines, 5));
+					textLine5.setText(getLineSafe(lines, 7));
+				}
 			} else {
-				// Legacy: map lines[0..4] to Line 1..5
+				// Original legacy: show lines[0..4] as Line 1..5
 				textLine1.setText(getLineSafe(lines, 0));
 				textLine2.setText(getLineSafe(lines, 1));
 				textLine3.setText(getLineSafe(lines, 2));
@@ -576,18 +607,33 @@ public class GuiEditReminders extends GuiCreateReminder {
 			boolean isNewFormat = (existing != null && existing.size() >= NEW_FMT_SIZE);
 
 			if (isNewFormat) {
-				// Start from existing to preserve Position/Facing/Author if present
 				out = new ArrayList<String>(existing);
 				ensureSize(out, NEW_FMT_SIZE);
 
-				out.set(2, safe(textLine1.getText())); // Setup
-				out.set(3, safe(textLine2.getText())); // Strategy
-				out.set(4, safe(textLine3.getText())); // Strafe
-				out.set(5, safe(textLine4.getText())); // Turn
-				out.set(7, safe(textLine5.getText())); // Tips
-				// out[0], out[1], out[6] preserved
+				boolean betterLc = isBetterLcEightLine(existing);
+
+				if (betterLc) {
+					// BetterLC save mapping (same as display mapping)
+					out.set(0, safe(textLine1.getText())); // Position
+					out.set(1, safe(textLine2.getText())); // Facing
+					out.set(2, safe(textLine3.getText())); // Setup
+					out.set(3, safe(textLine4.getText())); // Input (Strategy)
+					out.set(7, safe(textLine5.getText())); // Comment (Tips)
+					// Preserve Strafe(4), Turn(5), Author(6)
+				} else {
+					// Legacy-normalized 8-line: keep it in "setup-start" mapping
+					out.set(2, safe(textLine1.getText())); // Setup
+					out.set(3, safe(textLine2.getText())); // Strategy
+					out.set(4, safe(textLine3.getText())); // Strafe
+					out.set(5, safe(textLine4.getText())); // Turn
+					out.set(7, safe(textLine5.getText())); // Tips
+					// Preserve Position(0), Facing(1), Author(6) (usually empty, but keep)
+				}
 			} else {
-				// Convert legacy to new format
+				/*
+				 * Converting original legacy (<8) to 8-line:
+				 * IMPORTANT: treat as legacy-normalized (setup-start), NOT BetterLC.
+				 */
 				out.add(""); // Position
 				out.add(""); // Facing
 

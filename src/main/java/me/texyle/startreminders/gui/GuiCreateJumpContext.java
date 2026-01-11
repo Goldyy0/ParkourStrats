@@ -31,8 +31,13 @@ public class GuiCreateJumpContext extends GuiScreen {
     private GuiButton backButton;
     private GuiButton nextButton;
     private GuiButton createPlaceholderButton;
+    private GuiButton configurePlaceholderButton;
+
     private GuiButton pickServerButton;
     private GuiButton pickMapButton;
+
+    private GuiButton prevJumpButton;
+    private GuiButton nextJumpButton;
 
     private GuiTextField jumpNameField;
 
@@ -100,11 +105,56 @@ public class GuiCreateJumpContext extends GuiScreen {
         createPlaceholderButton.yPosition = yBase + 110;
         this.buttonList.add(createPlaceholderButton);
 
+        // Configure placeholder button – under "Create placeholder"
+        configurePlaceholderButton = new GuiButton(9, 0, 0, "Configure placeholder");
+        configurePlaceholderButton.width = 160;
+        configurePlaceholderButton.xPosition = (this.width - configurePlaceholderButton.width) / 2;
+        configurePlaceholderButton.yPosition = yBase + 134;
+        this.buttonList.add(configurePlaceholderButton);
+
+        // Navigation buttons for placeholder mode (shown only when enabled)
+        prevJumpButton = new GuiButton(10, 0, 0, "<");
+        prevJumpButton.width = 20;
+        prevJumpButton.height = 20;
+        prevJumpButton.xPosition = getFieldX();
+        final int NAV_Y_UP = 4; // move nav UI up by N pixels
+
+        prevJumpButton.yPosition = (yBase - 18) - NAV_Y_UP;
+        prevJumpButton.visible = false;
+        this.buttonList.add(prevJumpButton);
+
+        nextJumpButton = new GuiButton(11, 0, 0, ">");
+        nextJumpButton.width = 20;
+        nextJumpButton.height = 20;
+        nextJumpButton.xPosition = getFieldX() + FIELD_WIDTH - 20;
+        nextJumpButton.yPosition = (yBase - 18) - NAV_Y_UP;
+        nextJumpButton.visible = false;
+        this.buttonList.add(nextJumpButton);
+
         jumpNameField = new GuiTextField(0, this.fontRendererObj, getFieldX(), yBase, FIELD_WIDTH, 20);
         jumpNameField.setFocused(true);
         jumpNameField.setMaxStringLength(48);
 
+        // Auto-prefill jump name when placeholder sync is enabled and the field is empty
+        tryAutofillJumpName();
+
         updateButtonStates();
+    }
+
+    private void tryAutofillJumpName() {
+        if (jumpNameField == null) return;
+
+        String current = jumpNameField.getText();
+        if (current != null && current.trim().length() > 0) {
+            return; // do not override user text
+        }
+
+        if (ReminderManager.isPlaceholderSyncEnabledForSelectedMap()) {
+            String name = ReminderManager.getCurrentPlaceholderJumpName();
+            if (name != null && name.trim().length() > 0) {
+                jumpNameField.setText(name.trim());
+            }
+        }
     }
 
     @Override
@@ -116,6 +166,15 @@ public class GuiCreateJumpContext extends GuiScreen {
         this.drawCenteredString(this.fontRendererObj, title, this.width / 2, 14, COLOR_TEXT);
 
         int yBase = this.height / 3;
+
+        // Placeholder navigation UI (only when enabled)
+        boolean showNav = ReminderManager.isPlaceholderSyncEnabledForSelectedMap();
+        if (showNav) {
+            int idx = ReminderManager.getPlaceholderJumpIndex() + 1;
+            int count = ReminderManager.getPlaceholderJumpCount();
+            String page = idx + "/" + count;
+            this.drawCenteredString(this.fontRendererObj, EnumChatFormatting.YELLOW + page, this.width / 2, yBase - 12, COLOR_TEXT);
+        }
 
         this.fontRendererObj.drawString("Jump Name:", getLabelX(), yBase + 6, COLOR_TEXT, true);
         this.fontRendererObj.drawString("Server:", getLabelX(), yBase + 62, COLOR_TEXT, true);
@@ -137,7 +196,7 @@ public class GuiCreateJumpContext extends GuiScreen {
             this.drawCenteredString(this.fontRendererObj,
                     EnumChatFormatting.RED + errorText,
                     this.width / 2,
-                    yBase + 150,
+                    yBase + 165,
                     COLOR_TEXT);
         }
 
@@ -230,6 +289,29 @@ public class GuiCreateJumpContext extends GuiScreen {
             return;
         }
 
+        if (button.id == 9) {
+            Minecraft.getMinecraft().displayGuiScreen(new GuiConfigurePlaceholder(this));
+            return;
+        }
+
+        if (button.id == 10) { // prev
+            ReminderManager.prevPlaceholderJump();
+            if (jumpNameField != null) {
+                jumpNameField.setText(ReminderManager.getCurrentPlaceholderJumpName());
+            }
+            updateButtonStates();
+            return;
+        }
+
+        if (button.id == 11) { // next
+            ReminderManager.nextPlaceholderJump();
+            if (jumpNameField != null) {
+                jumpNameField.setText(ReminderManager.getCurrentPlaceholderJumpName());
+            }
+            updateButtonStates();
+            return;
+        }
+
         if (button.id == 8) {
             createPlaceholderJump();
             return;
@@ -296,6 +378,9 @@ public class GuiCreateJumpContext extends GuiScreen {
 
                         errorText = "";
                         updateButtonStates();
+
+                        // If placeholder sync is enabled and user selected a map, try to autofill
+                        tryAutofillJumpName();
                     })
             );
             return;
@@ -406,6 +491,10 @@ public class GuiCreateJumpContext extends GuiScreen {
         j.getReminders().add(r);
 
         ReminderManager.saveToFile();
+
+        // Advance placeholder index so next open uses the next jump name
+        ReminderManager.advancePlaceholderAfterCreate();
+
         goBack();
     }
 
@@ -440,6 +529,22 @@ public class GuiCreateJumpContext extends GuiScreen {
 
         if (createPlaceholderButton != null) {
             createPlaceholderButton.enabled = ok;
+        }
+
+        if (configurePlaceholderButton != null) {
+            // Allow opening config even if jump name is empty; only requires context selection
+            boolean canConfig = serverSelected && (isGlobal || selectedMap != null);
+            configurePlaceholderButton.enabled = canConfig;
+        }
+
+        boolean showNav = ReminderManager.isPlaceholderSyncEnabledForSelectedMap();
+        if (prevJumpButton != null) {
+            prevJumpButton.visible = showNav;
+            prevJumpButton.enabled = showNav;
+        }
+        if (nextJumpButton != null) {
+            nextJumpButton.visible = showNav;
+            nextJumpButton.enabled = showNav;
         }
     }
 

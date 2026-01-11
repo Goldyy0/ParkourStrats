@@ -196,20 +196,56 @@ public class GuiConvertLegacy extends GuiScreen {
         return (s != null) ? s : "";
     }
 
+    private static boolean isBlank(String s) {
+        return s == null || s.trim().isEmpty();
+    }
+
+    private static boolean isBetterLcEightLine(ArrayList<String> lines) {
+        if (lines == null || lines.size() < 8) return false;
+
+        // BetterLC: Position/Facing are meaningful (at least one non-empty)
+        return !isBlank(getLine(lines, 0)) || !isBlank(getLine(lines, 1));
+    }
+
     private static String getLegacyLineForDisplay(ArrayList<String> lines, int displayIndex) {
         if (lines == null || displayIndex < 0) {
             return "";
         }
 
-        // If the legacy entry was normalized into the new 8-line format:
-        // [Position, Facing, Setup, Strategy, Strafe, Turn, Author, Tips]
-        // then legacy "Line 1..5" should display indices 2..6 (offset +2).
         if (lines.size() >= 8) {
-            int realIndex = displayIndex + 2;
-            return getLine(lines, realIndex);
+            boolean betterLc = isBetterLcEightLine(lines);
+
+            int realIndex = -1;
+
+            if (betterLc) {
+                // BetterLC display mapping:
+                // line1=Position(0), line2=Facing(1), line3=Setup(2), line4=Input(3), line5=Comment(7)
+                switch (displayIndex) {
+                    case 0: realIndex = 0; break;
+                    case 1: realIndex = 1; break;
+                    case 2: realIndex = 2; break;
+                    case 3: realIndex = 3; break;
+                    case 4: realIndex = 7; break;
+                    default: realIndex = -1; break;
+                }
+            } else {
+                // Legacy-normalized 8-line (Position/Facing empty):
+                // Show from Setup so it starts at Line 1:
+                // line1=Setup(2), line2=Strategy(3), line3=Strafe(4), line4=Turn(5), line5=Tips(7)
+                switch (displayIndex) {
+                    case 0: realIndex = 2; break;
+                    case 1: realIndex = 3; break;
+                    case 2: realIndex = 4; break;
+                    case 3: realIndex = 5; break;
+                    case 4: realIndex = 7; break;
+                    default: realIndex = -1; break;
+                }
+            }
+
+            return (realIndex >= 0) ? getLine(lines, realIndex) : "";
         }
 
-        // Otherwise, fallback to old behavior.
+        // Old legacy behavior (pre-normalized): show first 5 lines as-is
         return getLine(lines, displayIndex);
     }
 

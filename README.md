@@ -23,6 +23,7 @@ N - open hierarchy UI
 ### QoL features:
 
 - Color customization of displayed text (jump name + strategy)
+- Creating placeholders and syncing jump names with sheet URL for faster template making
 - "Transfer to" button - relocates jump to a different container
 - Ability to switch off displaying the jump name in Edit menu
 - "Navigation" button in edit menu - changes coordinates to player's position

@@ -53,7 +53,7 @@ public class GuiJumpList extends GuiScreen {
     // Colors (ARGB)
     private static final int COLOR_PANEL_BG = 0xAA0B0B0B;
     private static final int COLOR_PANEL_BORDER = 0xCC2A2A2A;
-    private static final int COLOR_HEADER_BG = 0xCC151515;
+    private static final int COLOR_HEADER_BG = 0xFF4A4A4A;
     private static final int COLOR_GRID = 0x662A2A2A;
     private static final int COLOR_TITLE = 0xFFFFFF;
 
@@ -103,7 +103,7 @@ public class GuiJumpList extends GuiScreen {
                 this.height,
                 top,
                 bottom,
-                22,
+                144,
                 jumps,
                 new GuiJumpTableSlot.ISelectionHandler() {
                     @Override
@@ -352,8 +352,12 @@ public class GuiJumpList extends GuiScreen {
 
         table.drawScreen(mouseX, mouseY, partialTicks);
 
-        table.updateHorizontalScrollbarDrag(mouseX, mouseY);
+        // Make sure no scissor from table/header leaks into the scrollbar draw.
+        GL11.glDisable(GL11.GL_SCISSOR_TEST);
+
+        // IMPORTANT: draw first -> updates sb* cache, then handle drag
         table.drawHorizontalScrollbar(panelBottom - 10, panelBottom - 6);
+        table.updateHorizontalScrollbarDrag(mouseX, mouseY);
 
         updateButtonStates();
         super.drawScreen(mouseX, mouseY, partialTicks);
@@ -465,10 +469,12 @@ public class GuiJumpList extends GuiScreen {
         }
 
         if (button.id == BTN_CREATE) {
-            // RestoredStrats: Insert legacy reminders.json into restored store
+            // RestoredStrats: run BOTH imports (legacy + BetterLinkCraft) each time
             if (ReminderManager.isRestoredMap(map)) {
-                boolean imported = ReminderManager.insertLegacyFileIntoRestoredStrats();
-                if (imported) {
+                boolean importedLegacy = ReminderManager.insertLegacyFileIntoRestoredStrats();
+                boolean importedBlc = ReminderManager.insertBetterLinkCraftFileIntoRestoredStrats();
+
+                if (importedLegacy || importedBlc) {
                     initGui();
                 }
                 return;

@@ -11,6 +11,11 @@ public class ParkourMap {
     private int sheetGid = -1; // -1 means "not specified"
     private long lastSheetSyncMs = 0L;
 
+    // Placeholder helper sync (CreateJumpContext helper)
+    private String placeholderSheetUrl = "";
+    private boolean placeholderSyncEnabled = false;
+    private int placeholderJumpIndex = 0;
+
     public String getId() {
         return id;
     }
@@ -53,5 +58,33 @@ public class ParkourMap {
 
     public boolean hasSheetConfigured() {
         return getSheetUrl().trim().length() > 0;
+    }
+
+    // -------------------------
+    // Placeholder sync helpers
+    // -------------------------
+
+    public String getPlaceholderSheetUrl() {
+        return placeholderSheetUrl != null ? placeholderSheetUrl : "";
+    }
+
+    public void setPlaceholderSheetUrl(String url) {
+        this.placeholderSheetUrl = url != null ? url : "";
+    }
+
+    public boolean isPlaceholderSyncEnabled() {
+        return placeholderSyncEnabled;
+    }
+
+    public void setPlaceholderSyncEnabled(boolean enabled) {
+        this.placeholderSyncEnabled = enabled;
+    }
+
+    public int getPlaceholderJumpIndex() {
+        return placeholderJumpIndex;
+    }
+
+    public void setPlaceholderJumpIndex(int idx) {
+        this.placeholderJumpIndex = Math.max(0, idx);
     }
 }

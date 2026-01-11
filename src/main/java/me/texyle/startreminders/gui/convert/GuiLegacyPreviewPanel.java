@@ -32,21 +32,45 @@ public class GuiLegacyPreviewPanel {
             return;
         }
 
-        Reminder r = legacyJump.getReminders().get(0);
-        ArrayList<String> lines = r.lines;
+        int idx = legacyJump.getActiveReminderIndex();
+        if (idx < 0 || idx >= legacyJump.getReminders().size()) {
+            idx = 0;
+        }
+
+        Reminder r = legacyJump.getReminders().get(idx);
+        ArrayList<String> lines = (r != null) ? r.lines : null;
 
         if (lines != null) {
-            // If normalized to 8-line format, display legacy-like lines (Setup..Author)
-            int start = (lines.size() >= 8) ? 2 : 0;
-            int endExclusive = (lines.size() >= 8) ? Math.min(lines.size(), 7) : lines.size(); // show up to index 6
+            // Requested display:
+            // position -> line 1
+            // facing   -> line 2
+            // setup    -> line 3
+            // input    -> line 4 (Strategy)
+            // comment  -> line 5 (Tips)
+            if (lines.size() >= 8) {
+                int[] map = new int[] { 0, 1, 2, 3, 7 };
 
-            for (int i = start; i < endExclusive; i++) {
-                String s = lines.get(i);
-                if (s == null || s.trim().isEmpty()) {
-                    continue;
+                for (int i = 0; i < map.length; i++) {
+                    int realIndex = map[i];
+                    String s = (realIndex >= 0 && realIndex < lines.size()) ? lines.get(realIndex) : "";
+                    if (s == null || s.trim().isEmpty()) {
+                        continue;
+                    }
+                    font.drawString((i + 1) + ") " + s, x, lineY, 0xFFFFFF);
+                    lineY += 12;
                 }
-                font.drawString("- " + s, x, lineY, 0xFFFFFF);
-                lineY += 12;
+            } else {
+                // Old legacy: show up to first 5 non-empty lines
+                int shown = 0;
+                for (int i = 0; i < lines.size() && shown < 5; i++) {
+                    String s = lines.get(i);
+                    if (s == null || s.trim().isEmpty()) {
+                        continue;
+                    }
+                    font.drawString((shown + 1) + ") " + s, x, lineY, 0xFFFFFF);
+                    lineY += 12;
+                    shown++;
+                }
             }
         }
 
