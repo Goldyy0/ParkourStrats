@@ -2,8 +2,6 @@ package me.texyle.startreminders.gui.hierarchy;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 
 import me.texyle.startreminders.data.Jump;
 import me.texyle.startreminders.data.ParkourMap;
@@ -17,6 +15,7 @@ import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.ScaledResolution;
 import org.lwjgl.opengl.GL11;
+import org.lwjgl.input.Keyboard;
 
 public class GuiJumpList extends GuiScreen {
 
@@ -32,6 +31,7 @@ public class GuiJumpList extends GuiScreen {
     private GuiButton removeButton;
     private GuiButton backButton;
     private GuiButton transferButton;
+    private GuiButton configureSectionsButton;
 
     private GuiButton moveUpButton;
     private GuiButton moveDownButton;
@@ -68,13 +68,36 @@ public class GuiJumpList extends GuiScreen {
 
     private static final int BTN_EDIT_NAME = 7;
     private static final int BTN_TRANSFER = 8;
+    private static final int BTN_CONFIGURE_SECTIONS = 9;
+
+    // Persist scroll between initGui rebuilds (reset only when list is closed)
+    private boolean hasSavedScroll = false;
+    private int savedVScrollPx = 0;
+    private double savedHScrollPx = 0.0;
 
     // Deferred GUI open (workaround for prompt that auto-returns to parent on confirm)
     private GuiScreen pendingScreen = null;
 
+    // Debounce move actions (prevents multi-trigger causing jumps to fly to start/end)
+    private long lastMoveMs = 0L;
+    private Jump lastMoveJump = null;
+    private int lastMoveDelta = 0;
+
+    private static final long MOVE_DEBOUNCE_MS = 180L;
+
+    private int pendingMoveDelta = 0; // -1, +1, or 0
+    private long pendingMoveAtMs = 0L;
+
+    private final Jump initialSelection;
+
     public GuiJumpList(GuiScreen parent, ParkourMap map) {
+        this(parent, map, null);
+    }
+
+    public GuiJumpList(GuiScreen parent, ParkourMap map, Jump initialSelection) {
         this.parent = parent;
         this.map = map;
+        this.initialSelection = initialSelection;
     }
 
     @Override
@@ -136,14 +159,44 @@ public class GuiJumpList extends GuiScreen {
                 }
         );
 
+        // IMPORTANT: provide map reference to table (needed for section overlays / names)
+        table.setMap(map);
+
+        if (map != null) {
+            table.setMap(map);
+            table.setSectionColumns(map.getEffectiveSectionsCount());
+        } else {
+            table.setMap(null);
+            table.setSectionColumns(0);
+        }
+
         // Make GuiSlot draw within panel bounds (prevents full-width top/bottom overlays).
         table.setPanelBounds(panelLeft + 1, panelRight - 1);
+
+        // Restore scroll after table was fully configured (bounds + columns)
+        restoreScrollState();
+
+        // If this list was opened with a preselected jump (e.g., after Transfer),
+        // force-select it now. Do not depend on persisted scroll for this case.
+        if (initialSelection != null && table != null) {
+            hasSavedScroll = false; // ignore previously saved scroll for "jump focus" opens
+            table.selectJump(initialSelection);
+
+            // Ensure the moved jump is actually visible after opening the list.
+            table.ensureSelectedVisible(12);
+            // Alternatively, if you prefer center focus:
+            // table.centerSelectedRow();
+        }
 
         boolean isLegacy = ReminderManager.isRestoredMap(map);
 
         // Bottom buttons
-        String createLabel = isLegacy ? "Insert" : "Create";
-        createButton = new GuiButton(BTN_CREATE, 0, 0, 100, 20, createLabel);
+        // Only RestoredStrats uses the "Insert" button; all other maps must NOT show Create.
+        if (isLegacy) {
+            createButton = new GuiButton(BTN_CREATE, 0, 0, 100, 20, "Insert");
+        } else {
+            createButton = null;
+        }
 
         if (isLegacy) {
             convertButton = new GuiButton(BTN_CONVERT, 0, 0, 100, 20, "Convert");
@@ -155,6 +208,19 @@ public class GuiJumpList extends GuiScreen {
 
         removeButton = new GuiButton(BTN_REMOVE, 0, 0, 100, 20, "Remove");
         backButton = new GuiButton(BTN_BACK, 8, 8, 60, 20, "Back");
+
+        // ------------------------------------------------------------
+        // Configure sections button: HIDE for Global and RestoredStrats
+        // ------------------------------------------------------------
+        boolean hideConfigureSections = ReminderManager.isGlobalMap(map) || ReminderManager.isRestoredMap(map);
+
+        if (!hideConfigureSections) {
+            configureSectionsButton = new GuiButton(BTN_CONFIGURE_SECTIONS, 8 + 60 + 6, 8, 140, 20, "Configure sections");
+            configureSectionsButton.enabled = (map != null && map.getEffectiveSectionsCount() > 0);
+            this.buttonList.add(configureSectionsButton);
+        } else {
+            configureSectionsButton = null;
+        }
 
         if (!isLegacy) {
             int w = 120;
@@ -172,39 +238,51 @@ public class GuiJumpList extends GuiScreen {
         int gap = 8;
         int yButtons = this.height - 44;
 
-        if (convertButton != null) {
-            // Legacy: Create/Insert + Convert + Remove (no Edit name)
-            int totalW = createButton.width + gap + convertButton.width + gap + removeButton.width;
+        if (isLegacy) {
+            // Legacy: Insert + Convert + Remove (no Edit name)
+            int totalW = 0;
+            int btnCount = 0;
+
+            if (createButton != null) { totalW += createButton.width; btnCount++; }
+            if (convertButton != null) { totalW += (btnCount > 0 ? gap : 0) + convertButton.width; btnCount++; }
+            totalW += (btnCount > 0 ? gap : 0) + removeButton.width;
+
             int startX = (this.width - totalW) / 2;
+            int x = startX;
 
-            createButton.xPosition = startX;
-            createButton.yPosition = yButtons;
+            if (createButton != null) {
+                createButton.xPosition = x;
+                createButton.yPosition = yButtons;
+                x += createButton.width + gap;
+            }
 
-            convertButton.xPosition = startX + createButton.width + gap;
-            convertButton.yPosition = yButtons;
+            if (convertButton != null) {
+                convertButton.xPosition = x;
+                convertButton.yPosition = yButtons;
+                x += convertButton.width + gap;
+            }
 
-            removeButton.xPosition = convertButton.xPosition + convertButton.width + gap;
+            removeButton.xPosition = x;
             removeButton.yPosition = yButtons;
 
             // Do not show edit name in legacy list
             editNameButton.visible = false;
             editNameButton.enabled = false;
         } else {
-            // Normal: Create + Edit name + Remove
-            int totalW = createButton.width + gap + editNameButton.width + gap + removeButton.width;
+            // Normal: Edit name + Remove (NO Create)
+            int totalW = editNameButton.width + gap + removeButton.width;
             int startX = (this.width - totalW) / 2;
 
-            createButton.xPosition = startX;
-            createButton.yPosition = yButtons;
-
-            editNameButton.xPosition = startX + createButton.width + gap;
+            editNameButton.xPosition = startX;
             editNameButton.yPosition = yButtons;
 
             removeButton.xPosition = editNameButton.xPosition + editNameButton.width + gap;
             removeButton.yPosition = yButtons;
         }
 
-        this.buttonList.add(createButton);
+        if (createButton != null) {
+            this.buttonList.add(createButton);
+        }
         if (convertButton != null) {
             this.buttonList.add(convertButton);
         }
@@ -213,25 +291,41 @@ public class GuiJumpList extends GuiScreen {
         this.buttonList.add(backButton);
 
         // Reorder arrows next to Remove (side by side)
-        int arrowsW = 20;
-        int arrowsH = 20;
-        int arrowsGap = 4;
+        // Requirement: hide arrows in RestoredStrats (legacy list).
+        if (!isLegacy) {
+            int arrowsW = 20;
+            int arrowsH = 20;
+            int arrowsGap = 4;
 
-        int desiredX = removeButton.xPosition + removeButton.width + 8;
-        int maxX = this.width - 10 - (arrowsW * 2 + arrowsGap);
+            int desiredX = removeButton.xPosition + removeButton.width + 8;
+            int maxX = this.width - 10 - (arrowsW * 2 + arrowsGap);
 
-        int arrowsX = Math.min(desiredX, maxX);
-        if (arrowsX < 10) {
-            arrowsX = 10;
+            int arrowsX = Math.min(desiredX, maxX);
+            if (arrowsX < 10) {
+                arrowsX = 10;
+            }
+
+            moveUpButton = new GuiButton(BTN_MOVE_UP, arrowsX, yButtons, arrowsW, arrowsH, "^");
+            moveDownButton = new GuiButton(BTN_MOVE_DOWN, arrowsX + arrowsW + arrowsGap, yButtons, arrowsW, arrowsH, "v");
+
+            this.buttonList.add(moveUpButton);
+            this.buttonList.add(moveDownButton);
+        } else {
+            moveUpButton = null;
+            moveDownButton = null;
         }
 
-        moveUpButton = new GuiButton(BTN_MOVE_UP, arrowsX, yButtons, arrowsW, arrowsH, "^");
-        moveDownButton = new GuiButton(BTN_MOVE_DOWN, arrowsX + arrowsW + arrowsGap, yButtons, arrowsW, arrowsH, "v");
-
-        this.buttonList.add(moveUpButton);
-        this.buttonList.add(moveDownButton);
-
         updateButtonStates();
+
+        // Prevent key repeat spam on this screen (UP/DOWN should be single-step per press)
+        Keyboard.enableRepeatEvents(false);
+    }
+
+    @Override
+    public void onGuiClosed() {
+        super.onGuiClosed();
+        // Restore default behavior for other screens (e.g., typing in prompts)
+        Keyboard.enableRepeatEvents(true);
     }
 
     @Override
@@ -243,18 +337,22 @@ public class GuiJumpList extends GuiScreen {
             GuiScreen toOpen = pendingScreen;
             pendingScreen = null;
             Minecraft.getMinecraft().displayGuiScreen(toOpen);
+            return;
+        }
+
+        if (pendingMoveDelta != 0) {
+            int d = pendingMoveDelta;
+            pendingMoveDelta = 0;
+            moveSelectedJump(d);
         }
     }
 
     private void refreshData() {
-        jumps = ReminderManager.getJumps(map);
-        if (jumps == null) {
+        if (map != null && map.getJumps() != null) {
+            jumps = map.getJumps();
+        } else {
             jumps = new ArrayList<Jump>();
         }
-
-        // Requirement: Jump list should be oldest -> newest (insertion order).
-        // Therefore, do NOT sort unless explicitly using "Nearest".
-        sortJumps();
     }
 
     private void updateButtonStates() {
@@ -275,6 +373,10 @@ public class GuiJumpList extends GuiScreen {
             editNameButton.visible = !isLegacy;
         }
 
+        if (configureSectionsButton != null) {
+            configureSectionsButton.enabled = (map != null && map.getEffectiveSectionsCount() > 0);
+        }
+
         int idx = (table != null) ? table.getSelectedJumpIndexInItems() : -1;
         int size = (jumps != null) ? jumps.size() : 0;
 
@@ -283,30 +385,6 @@ public class GuiJumpList extends GuiScreen {
 
         if (moveUpButton != null) moveUpButton.enabled = canMoveUp;
         if (moveDownButton != null) moveDownButton.enabled = canMoveDown;
-    }
-
-    private void sortJumps() {
-        if (jumps == null || jumps.size() <= 1) {
-            return;
-        }
-
-        if ("Nearest".equals(sortBy)) {
-            final EntityPlayerSP player = Minecraft.getMinecraft().thePlayer;
-            if (player == null) {
-                return;
-            }
-
-            Collections.sort(jumps, new Comparator<Jump>() {
-                @Override
-                public int compare(Jump a, Jump b) {
-                    double da = distanceSqToJump(player, a);
-                    double db = distanceSqToJump(player, b);
-                    return Double.compare(da, db);
-                }
-            });
-        }
-
-        // "Created" means: keep insertion order. No sorting required.
     }
 
     private double distanceSqToJump(EntityPlayerSP player, Jump j) {
@@ -392,7 +470,17 @@ public class GuiJumpList extends GuiScreen {
 
             int x = xStart;
 
-            drawHeaderCell("Row", x, y, GuiJumpTableSlot.COL_ROW_W); x += GuiJumpTableSlot.COL_ROW_W;
+            drawHeaderCell("Row", x, y, GuiJumpTableSlot.COL_ROW_W);
+            x += GuiJumpTableSlot.COL_ROW_W;
+
+            // Section headers based on map config
+            int sc = (map != null) ? map.getEffectiveSectionsCount() : 0;
+            for (int i = 0; i < sc; i++) {
+                String name = (map != null) ? map.getSectionName(i) : "";
+                drawHeaderCell(name, x, y, GuiJumpTableSlot.COL_SECTION_W);
+                x += GuiJumpTableSlot.COL_SECTION_W;
+            }
+
             drawHeaderCell("Jump", x, y, GuiJumpTableSlot.COL_JUMP_W); x += GuiJumpTableSlot.COL_JUMP_W;
             drawHeaderCell("Position", x, y, GuiJumpTableSlot.COL_POS_W); x += GuiJumpTableSlot.COL_POS_W;
             drawHeaderCell("Facing", x, y, GuiJumpTableSlot.COL_FACING_W); x += GuiJumpTableSlot.COL_FACING_W;
@@ -454,17 +542,30 @@ public class GuiJumpList extends GuiScreen {
         }
 
         if (button.id == BTN_BACK) {
+            hasSavedScroll = false; // reset only when leaving this list
             Minecraft.getMinecraft().displayGuiScreen(parent);
             return;
         }
 
+        if (button.id == BTN_CONFIGURE_SECTIONS) {
+            // Button is hidden for Global/RestoredStrats, but keep this null-safe anyway.
+            if (map == null) return;
+            if (ReminderManager.isGlobalMap(map) || ReminderManager.isRestoredMap(map)) return;
+            if (map.getEffectiveSectionsCount() <= 0) return;
+
+            Minecraft.getMinecraft().displayGuiScreen(new GuiConfigureSections(this, map));
+            return;
+        }
+
         if (button.id == BTN_MOVE_UP) {
-            moveSelectedJump(-1);
+            pendingMoveDelta = -1;
+            pendingMoveAtMs = Minecraft.getSystemTime();
             return;
         }
 
         if (button.id == BTN_MOVE_DOWN) {
-            moveSelectedJump(+1);
+            pendingMoveDelta = 1;
+            pendingMoveAtMs = Minecraft.getSystemTime();
             return;
         }
 
@@ -475,6 +576,7 @@ public class GuiJumpList extends GuiScreen {
                 boolean importedBlc = ReminderManager.insertBetterLinkCraftFileIntoRestoredStrats();
 
                 if (importedLegacy || importedBlc) {
+                    saveScrollState();
                     initGui();
                 }
                 return;
@@ -550,6 +652,7 @@ public class GuiJumpList extends GuiScreen {
                     new GuiTextPrompt.IResultHandler() {
                         @Override
                         public void onConfirm(String text) {
+                            saveScrollState();
                             ReminderManager.renameJump(map, selectedFinal, text);
                             initGui();
                         }
@@ -606,6 +709,7 @@ public class GuiJumpList extends GuiScreen {
                     new GuiConfirm.IConfirmHandler() {
                         @Override
                         public void onYes() {
+                            saveScrollState();
                             ReminderManager.removeJump(map, selected);
                             initGui();
                         }
@@ -617,8 +721,48 @@ public class GuiJumpList extends GuiScreen {
         }
     }
 
+    private void saveScrollState() {
+        if (table == null) return;
+
+        savedVScrollPx = table.getVerticalScrollPx();
+        savedHScrollPx = table.getHorizontalScrollPx();
+        hasSavedScroll = true;
+    }
+
+    private void restoreScrollState() {
+        if (!hasSavedScroll) return;
+        if (table == null) return;
+
+        table.setVerticalScrollPx(savedVScrollPx);
+        table.setHorizontalScrollPx(savedHScrollPx);
+    }
+
+    private void requestMoveSelectedJump(int delta) {
+        if (table == null || map == null) return;
+
+        Jump selected = table.getSelectedItem();
+        if (selected == null) return;
+
+        long now = Minecraft.getSystemTime();
+
+        // Ignore accidental duplicates (same jump + same direction in a short window)
+        if (selected == lastMoveJump && delta == lastMoveDelta) {
+            long dt = now - lastMoveMs;
+            if (dt >= 0 && dt <= MOVE_DEBOUNCE_MS) {
+                System.out.println("[ParkourStrats] [DBG] requestMoveSelectedJump ignored duplicate dt=" + dt);
+                return;
+            }
+        }
+
+        lastMoveMs = now;
+        lastMoveJump = selected;
+        lastMoveDelta = delta;
+
+        moveSelectedJump(delta);
+    }
+
     private void moveSelectedJump(int delta) {
-        if (table == null || jumps == null) {
+        if (table == null || map == null) {
             return;
         }
 
@@ -627,32 +771,74 @@ public class GuiJumpList extends GuiScreen {
             return;
         }
 
-        int idx = table.getSelectedJumpIndexInItems();
+        ArrayList<Jump> list = map.getJumps();
+        if (list == null || list.size() <= 1) {
+            return;
+        }
+
+        // Reference-based lookup (do NOT use equals()).
+        int idx = -1;
+        for (int i = 0; i < list.size(); i++) {
+            if (list.get(i) == selected) {
+                idx = i;
+                break;
+            }
+        }
+
+        // If not found, do best-effort fallback (should be rare).
+        if (idx < 0) {
+            idx = table.getSelectedJumpIndexInItems();
+        }
         if (idx < 0) {
             return;
         }
 
         int newIdx = idx + delta;
-        if (newIdx < 0 || newIdx >= jumps.size()) {
+        if (newIdx < 0 || newIdx >= list.size()) {
             return;
         }
 
-        Collections.swap(jumps, idx, newIdx);
+        // Do the actual move (1 step).
+        if (!ReminderManager.moveJumpByOneRespectingSections(map, selected, delta)) {
+            return;
+        }
 
-        ReminderManager.saveToFile();
+        // Restore scroll BEFORE rebuild
+        saveScrollState();
 
-        table.refreshRows();
-        table.selectJump(selected);
+        // Rebuild GUI so table rebinds and section overlays use fresh indices.
+        initGui();
+
+        // Restore selection on the same Jump instance and refresh row caches.
+        if (table != null) {
+            table.selectJump(selected);
+        }
 
         updateButtonStates();
     }
 
     @Override
-    protected void keyTyped(char typedChar, int keyCode) throws IOException {
-        if (keyCode == 1) {
-            Minecraft.getMinecraft().displayGuiScreen(parent);
+    public void handleKeyboardInput() throws java.io.IOException {
+        super.handleKeyboardInput();
+
+        // Only handle on key-down, and ignore key repeat events.
+        if (!Keyboard.getEventKeyState()) {
             return;
         }
-        super.keyTyped(typedChar, keyCode);
+        if (Keyboard.isRepeatEvent()) {
+            return;
+        }
+
+        int key = Keyboard.getEventKey();
+
+        if (key == Keyboard.KEY_UP) {
+            requestMoveSelectedJump(-1);
+            return;
+        }
+
+        if (key == Keyboard.KEY_DOWN) {
+            requestMoveSelectedJump(1);
+            return;
+        }
     }
 }

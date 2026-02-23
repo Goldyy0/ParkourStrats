@@ -10,6 +10,7 @@ import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
 import java.util.Map;
+import java.util.HashMap;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -18,12 +19,14 @@ import com.google.gson.reflect.TypeToken;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonArray;
 
 import me.texyle.startreminders.StratReminders;
 import me.texyle.startreminders.data.DataStore;
 import me.texyle.startreminders.data.Jump;
 import me.texyle.startreminders.data.ParkourMap;
 import me.texyle.startreminders.data.ServerProfile;
+import me.texyle.startreminders.data.MapSection;
 import me.texyle.startreminders.gui.hierarchy.GuiServerList;
 import me.texyle.startreminders.utils.DrawUtils;
 import net.minecraft.client.Minecraft;
@@ -130,6 +133,430 @@ public class ReminderManager {
 	private static final long BLC_MISSING_CHAT_COOLDOWN_MS = 2500L;
 
 	// -------------------------
+	// Section Sync
+	// -------------------------
+
+	private static final String SECTION_SYNC_ENDPOINT =
+			"https://script.google.com/macros/s/AKfycbyTqmi25lLkfqAqfmcNGDYK7IRwBU-40XWaAwIBNFfkX45LuH-cTjwi2OzMCAw5ElYk/exec";
+	private static String lastSectionSyncError = "";
+
+	public static String getLastSectionSyncError() {
+		return lastSectionSyncError != null ? lastSectionSyncError : "";
+	}
+
+	private static void setSectionSyncError_(String msg) {
+		lastSectionSyncError = (msg != null) ? msg : "";
+	}
+
+	public static boolean syncSectionsFromAppsScript(ParkourMap map, String sheetUrl) {
+		ensureStoresInitialized();
+		setSectionSyncError_("");
+
+		if (map == null) {
+			setSectionSyncError_("Map is null.");
+			postSectionSyncErrorToChat_();
+			return false;
+		}
+
+		String u = (sheetUrl != null) ? sheetUrl.trim() : "";
+		if (u.isEmpty()) {
+			setSectionSyncError_("Spreadsheet URL is empty.");
+			postSectionSyncErrorToChat_();
+			return false;
+		}
+
+		try {
+			String url = SECTION_SYNC_ENDPOINT + "?sheetUrl=" + urlEncode_(u);
+
+			String json = httpGetUtf8_(url);
+			if (json == null || json.trim().isEmpty()) {
+				setSectionSyncError_("Empty response from Apps Script.");
+				postSectionSyncErrorToChat_();
+				return false;
+			}
+
+			boolean ok = applySectionsFromJson_(map, json);
+			if (!ok) {
+				// Prefer explicit "error" returned by Apps Script
+				String err = tryReadErrorFromJson_(json);
+				if (err != null && err.trim().length() > 0) {
+					setSectionSyncError_(err.trim());
+				} else {
+					setSectionSyncError_("Failed to apply sections from JSON.");
+				}
+
+				postSectionSyncErrorToChat_();
+				return false;
+			}
+
+			map.setLastSheetSyncMs(System.currentTimeMillis());
+			saveToFile();
+			return true;
+
+		} catch (Throwable t) {
+			t.printStackTrace();
+			setSectionSyncError_(String.valueOf(t));
+			postSectionSyncErrorToChat_();
+			return false;
+		}
+	}
+
+	private static String httpGetUtf8_(String urlStr) throws Exception {
+		java.net.URL url = new java.net.URL(urlStr);
+		java.net.HttpURLConnection con = (java.net.HttpURLConnection) url.openConnection();
+		con.setRequestMethod("GET");
+		con.setConnectTimeout(8000);
+		con.setReadTimeout(15000);
+		con.setUseCaches(false);
+
+		java.io.InputStream in = con.getInputStream();
+		try {
+			java.io.BufferedReader br = new java.io.BufferedReader(new java.io.InputStreamReader(in, "UTF-8"));
+			StringBuilder sb = new StringBuilder();
+			String line;
+			while ((line = br.readLine()) != null) {
+				sb.append(line);
+			}
+			return sb.toString();
+		} finally {
+			try { in.close(); } catch (Throwable ignored) {}
+		}
+	}
+
+	private static String urlEncode_(String s) throws Exception {
+		return java.net.URLEncoder.encode(s != null ? s : "", "UTF-8");
+	}
+
+	private static class JumpCellView {
+		final String v;
+		final int bg;
+
+		JumpCellView(String v, int bg) {
+			this.v = v != null ? v : "";
+			this.bg = bg;
+		}
+	}
+
+	private static boolean applySectionsFromJson_(ParkourMap map, String json) {
+		if (map == null) return false;
+
+		JsonObject root = new JsonParser().parse(json).getAsJsonObject();
+		if (root == null) return false;
+
+		if (!root.has("ok") || !root.get("ok").getAsBoolean()) {
+			return false;
+		}
+
+		JsonArray header = root.getAsJsonArray("header");
+		JsonArray rows = root.getAsJsonArray("rows");
+		if (header == null || rows == null) return false;
+
+		int jumpsCount = (map.getJumps() != null) ? map.getJumps().size() : 0;
+		if (jumpsCount <= 0) return false;
+
+		int maxLevels = map.getMaxSectionLevelsAllowed();
+		if (maxLevels < 1) maxLevels = 1;
+		if (maxLevels > 4) maxLevels = 4;
+
+		// Build header->column index lookup
+		HashMap<String, Integer> colByName = new HashMap<String, Integer>();
+		for (int c = 0; c < header.size(); c++) {
+			String h = header.get(c).getAsString();
+			if (h != null) {
+				String key = h.trim();
+				if (!key.isEmpty()) {
+					colByName.put(key, Integer.valueOf(c));
+				}
+			}
+		}
+
+		// ------------------------------------------------------------
+		// CRITICAL FIX:
+		// Reduce sheet rows (strategies) to jump-level blocks (1 jump = 1 entry)
+		// We detect new jump block by non-empty cell in "Jump" column.
+		// ------------------------------------------------------------
+		int jumpColIdx = -1;
+		// Try common names (case-sensitive in map, but we try typical sheet naming)
+		if (colByName.containsKey("Jump")) jumpColIdx = colByName.get("Jump").intValue();
+		else if (colByName.containsKey("JUMP")) jumpColIdx = colByName.get("JUMP").intValue();
+		else if (colByName.containsKey("jump")) jumpColIdx = colByName.get("jump").intValue();
+
+		// Fallback: first column is usually Jump in your CSV export
+		if (jumpColIdx < 0) jumpColIdx = 0;
+
+		// Build jump blocks as [startRowInclusive, endRowInclusive]
+		java.util.ArrayList<int[]> jumpBlocks = new java.util.ArrayList<int[]>();
+		int blockStart = -1;
+
+		for (int r = 0; r < rows.size(); r++) {
+			JsonArray row = rows.get(r).getAsJsonArray();
+			JsonObject jumpCell = (row != null && jumpColIdx >= 0 && jumpColIdx < row.size())
+					? row.get(jumpColIdx).getAsJsonObject()
+					: null;
+
+			String jumpName = (jumpCell != null && jumpCell.has("v")) ? jumpCell.get("v").getAsString() : "";
+			jumpName = (jumpName != null) ? jumpName.trim() : "";
+
+			boolean startsNewBlock = !jumpName.isEmpty();
+
+			if (startsNewBlock) {
+				if (blockStart >= 0) {
+					jumpBlocks.add(new int[] { blockStart, r - 1 });
+				}
+				blockStart = r;
+			}
+		}
+		if (blockStart >= 0) {
+			jumpBlocks.add(new int[] { blockStart, rows.size() - 1 });
+		}
+
+		// If the sheet starts with merged empty Jump cells and never starts a block, treat as one block.
+		if (jumpBlocks.isEmpty() && rows.size() > 0) {
+			jumpBlocks.add(new int[] { 0, rows.size() - 1 });
+		}
+
+		// Now we have jumpBlocks in sheet order. We only use up to jumpsCount (template size).
+		int usableJumps = Math.min(jumpsCount, jumpBlocks.size());
+
+		// For each section level, locate matching column by map's configured name.
+		for (int levelOneBased = 1; levelOneBased <= maxLevels; levelOneBased++) {
+			String colName = map.getSectionName(levelOneBased - 1);
+			colName = (colName != null) ? colName.trim() : "";
+			if (colName.isEmpty()) continue;
+
+			Integer colIdxObj = colByName.get(colName);
+			if (colIdxObj == null) {
+				// Column missing -> do not touch existing sections on this level.
+				continue;
+			}
+			int colIdx = colIdxObj.intValue();
+
+			ArrayList<MapSection> target = map.getSectionsForLevel(levelOneBased);
+			if (target == null) continue;
+			target.clear();
+
+			// Build jump-level cell view for this section column
+			java.util.ArrayList<JumpCellView> jumpView = new java.util.ArrayList<JumpCellView>(usableJumps);
+
+			for (int j = 0; j < usableJumps; j++) {
+				int[] b = jumpBlocks.get(j);
+				int r0 = b[0];
+				int r1 = b[1];
+
+				JumpCellView view = reduceBlockToJumpCell_(rows, r0, r1, colIdx);
+				jumpView.add(view);
+			}
+
+			buildSectionsFromJumpView_(target, jumpView, usableJumps);
+		}
+
+		return true;
+	}
+
+	private static JumpCellView reduceBlockToJumpCell_(JsonArray rows, int r0, int r1, int colIdx) {
+		if (rows == null) return new JumpCellView("", 0xFFFFFFFF);
+		if (r0 < 0) r0 = 0;
+		if (r1 < r0) r1 = r0;
+		if (r1 >= rows.size()) r1 = rows.size() - 1;
+
+		// 1) If any row in the block has a non-empty label, use THAT row's bg.
+		for (int r = r0; r <= r1; r++) {
+			JsonArray row = rows.get(r).getAsJsonArray();
+			JsonObject cell = (row != null && colIdx >= 0 && colIdx < row.size()) ? row.get(colIdx).getAsJsonObject() : null;
+
+			String v = (cell != null && cell.has("v")) ? cell.get("v").getAsString() : "";
+			v = (v != null) ? v.trim() : "";
+
+			if (!v.isEmpty()) {
+				String bgHex = (cell != null && cell.has("bg")) ? cell.get("bg").getAsString() : "FFFFFFFF";
+				int bg = parseArgbHex_(bgHex);
+				return new JumpCellView(v, bg);
+			}
+		}
+
+		// 2) No label in this jump block -> choose a stable bg for the block.
+		// Use the most frequent bg (mode). Prefer non-white if present.
+		java.util.HashMap<Integer, Integer> counts = new java.util.HashMap<Integer, Integer>();
+		int bestBg = 0xFFFFFFFF;
+		int bestCount = -1;
+
+		int bestNonWhiteBg = 0xFFFFFFFF;
+		int bestNonWhiteCount = -1;
+
+		for (int r = r0; r <= r1; r++) {
+			JsonArray row = rows.get(r).getAsJsonArray();
+			JsonObject cell = (row != null && colIdx >= 0 && colIdx < row.size()) ? row.get(colIdx).getAsJsonObject() : null;
+
+			String bgHex = (cell != null && cell.has("bg")) ? cell.get("bg").getAsString() : "FFFFFFFF";
+			int bg = parseArgbHex_(bgHex);
+
+			Integer prev = counts.get(bg);
+			int n = (prev != null ? prev.intValue() : 0) + 1;
+			counts.put(bg, Integer.valueOf(n));
+
+			if (n > bestCount) {
+				bestCount = n;
+				bestBg = bg;
+			}
+
+			// "Non-white" heuristic: treat pure white as default background.
+			// (We ignore alpha and compare RGB only.)
+			if ( (bg & 0xFFFFFF) != 0xFFFFFF ) {
+				if (n > bestNonWhiteCount) {
+					bestNonWhiteCount = n;
+					bestNonWhiteBg = bg;
+				}
+			}
+		}
+
+		int chosen = (bestNonWhiteCount >= 0) ? bestNonWhiteBg : bestBg;
+		return new JumpCellView("", chosen);
+	}
+
+	private static void buildSectionsFromJumpView_(
+			ArrayList<MapSection> out,
+			java.util.ArrayList<JumpCellView> jumpView,
+			int jumpsCount
+	) {
+		if (out == null || jumpView == null) return;
+		if (jumpsCount <= 0) return;
+
+		String activeName = null;
+		int activeColor = 0xFFFFFFFF;
+		int activeStart = -1;
+
+		int usable = Math.min(jumpsCount, jumpView.size());
+
+		for (int j = 0; j < usable; j++) {
+			JumpCellView cell = jumpView.get(j);
+			String v = (cell != null) ? cell.v : "";
+			int bg = (cell != null) ? cell.bg : 0xFFFFFFFF;
+
+			v = (v != null) ? v.trim() : "";
+			boolean hasLabel = !v.isEmpty();
+
+			if (activeName == null) {
+				if (hasLabel) {
+					activeName = v;
+					activeColor = bg;
+					activeStart = j;
+				}
+				continue;
+			}
+
+			// We are inside a section
+			if (hasLabel) {
+				// New section starts when either name or color changes
+				if (!v.equals(activeName) || (bg & 0xFFFFFF) != (activeColor & 0xFFFFFF)) {
+					addSectionIfValid_(out, activeName, activeColor, activeStart, j - 1, jumpsCount);
+
+					activeName = v;
+					activeColor = bg;
+					activeStart = j;
+				}
+				continue;
+			}
+
+			// Empty text cell: keep section only if background matches
+			if ((bg & 0xFFFFFF) != (activeColor & 0xFFFFFF)) {
+				addSectionIfValid_(out, activeName, activeColor, activeStart, j - 1, jumpsCount);
+
+				activeName = null;
+				activeColor = 0xFFFFFFFF;
+				activeStart = -1;
+			}
+		}
+
+		// Close trailing section
+		if (activeName != null && activeStart >= 0) {
+			addSectionIfValid_(out, activeName, activeColor, activeStart, usable - 1, jumpsCount);
+		}
+	}
+
+	private static void addSectionIfValid_(
+			ArrayList<MapSection> out,
+			String name,
+			int colorArgb,
+			int start,
+			int end,
+			int jumpsCount
+	) {
+		if (out == null) return;
+
+		String n = (name != null) ? name.trim() : "";
+		if (n.isEmpty()) return;
+
+		if (start < 0 || end < 0) return;
+		if (end < start) return;
+
+		// Safety: do not create if range exceeds available jumps
+		if (start >= jumpsCount) return;
+		if (end >= jumpsCount) return;
+
+		MapSection s = new MapSection();
+		s.setId(makeSectionId_());
+		s.setName(n);
+
+		// Ensure opaque
+		s.setColorArgb(colorArgb);
+
+		// Auto text color (black/white)
+		s.setTextColorArgb(pickTextColorForBg_(s.getColorArgb()));
+
+		s.setStartJumpIndex(start);
+		s.setEndJumpIndex(end);
+
+		out.add(s);
+	}
+
+	private static String makeSectionId_() {
+		// Simple unique id that is stable enough for JSON persistence
+		return "sec_" + System.currentTimeMillis() + "_" + (int) (Math.random() * 1000000.0);
+	}
+
+	private static int parseArgbHex_(String hex) {
+		try {
+			String h = (hex != null) ? hex.trim() : "";
+			if (h.startsWith("#")) h = h.substring(1);
+
+			if (h.length() == 8) {
+				return (int) Long.parseLong(h, 16);
+			}
+			if (h.length() == 6) {
+				return (int) Long.parseLong("FF" + h, 16);
+			}
+		} catch (Throwable ignored) {}
+
+		return 0xFFFFFFFF;
+	}
+
+	private static int pickTextColorForBg_(int argb) {
+		int r = (argb >> 16) & 0xFF;
+		int g = (argb >> 8) & 0xFF;
+		int b = (argb) & 0xFF;
+
+		int y = (int) (0.2126 * r + 0.7152 * g + 0.0722 * b);
+
+		return (y >= 140) ? 0xFF000000 : 0xFFFFFFFF;
+	}
+
+	private static String tryReadErrorFromJson_(String json) {
+		try {
+			JsonElement el = new JsonParser().parse(json);
+			if (el == null || !el.isJsonObject()) return "";
+			JsonObject obj = el.getAsJsonObject();
+
+			if (!obj.has("error")) return "";
+			JsonElement errEl = obj.get("error");
+			if (errEl == null) return "";
+			String err = errEl.getAsString();
+			return err != null ? err.trim() : "";
+		} catch (Throwable ignored) {
+			return "";
+		}
+	}
+
+	// -------------------------
 	// Google Sheets sync
 	// -------------------------
 
@@ -137,11 +564,6 @@ public class ReminderManager {
 	private static final Set<String> sheetSyncAnnouncedKeys = new HashSet<String>();
 
 	private static final String SHEETS_CACHE_DIR = "StratReminders/sheets_cache";
-	private static final int SHEET_JUMP_INDEX_TOLERANCE = 20;
-
-	// Last-resort occurrence-nearest fallback tolerance (ONLY used if all other mapping fails).
-	// IMPORTANT: When this path is used, we do NOT persist sheetRowKey.
-	private static final int DUPLICATE_OCCURRENCE_NEAREST_TOLERANCE = 20;
 
 	private static class ResolvedJump {
 		final Jump jump;
@@ -342,7 +764,70 @@ public class ReminderManager {
 		return s.trim().toLowerCase();
 	}
 
+	private static int findHeaderRowIndex(List<List<String>> rows) {
+		if (rows == null || rows.isEmpty()) return -1;
+
+		int maxScan = Math.min(10, rows.size());
+		int bestRow = -1;
+		int bestScore = 0;
+
+		for (int r = 0; r < maxScan; r++) {
+			List<String> row = rows.get(r);
+			if (row == null || row.isEmpty()) continue;
+
+			int score = scoreHeaderRow(row);
+
+			if (score > bestScore) {
+				bestScore = score;
+				bestRow = r;
+			}
+		}
+
+		// Require at least a minimal confidence
+		return (bestScore >= 4) ? bestRow : -1;
+	}
+
+	private static int scoreHeaderRow(List<String> row) {
+		int score = 0;
+
+		for (String cell : row) {
+			if (cell == null) continue;
+			String k = CsvUtils.normalizeKey(cell);
+
+			if (k.isEmpty()) continue;
+
+			// Strong indicators
+			if (k.equals("jump") || k.equals("jumpname") || k.equals("jumptitle")) {
+				score += 2;
+				continue;
+			}
+			if (k.equals("strategy") || k.equals("strat")) {
+				score += 2;
+				continue;
+			}
+
+			// Medium indicators
+			if (k.equals("position") || k.equals("pos")) score += 1;
+			else if (k.equals("facing") || k.equals("face")) score += 1;
+			else if (k.equals("setup")) score += 1;
+			else if (k.equals("strafe")) score += 1;
+			else if (k.equals("turn")) score += 1;
+			else if (k.equals("author") || k.equals("by")) score += 1;
+			else if (k.equals("tips") || k.equals("notes") || k.equals("comment")) score += 1;
+
+				// Section-related (generic, works with dynamic names too)
+			else if (k.contains("section")) score += 1;
+			else if (k.contains("sub")) score += 1;
+			else if (k.equals("area")) score += 1;
+			else if (k.equals("cp") || k.equals("checkpoint")) score += 1;
+			else if (k.equals("sp") || k.equals("stagepoint")) score += 1;
+		}
+
+		return score;
+	}
+
 	private static void applyCsvToMap(ServerProfile server, ParkourMap map, String csvText, boolean announceInChat) {
+
 		if (map == null || csvText == null) {
 			return;
 		}
@@ -361,7 +846,27 @@ public class ReminderManager {
 			return;
 		}
 
-		List<String> header = rows.get(0);
+		int headerRowIndex = findHeaderRowIndex(rows);
+		if (headerRowIndex < 0) {
+			if (announceInChat) {
+				sendChat(Minecraft.getMinecraft(),
+						EnumChatFormatting.DARK_AQUA + "[ParkourStrats] " + EnumChatFormatting.RED
+								+ "CSV header row not found (expected columns like 'jump', 'strategy').");
+			}
+			return;
+		}
+
+		int dataStartRow = headerRowIndex + 1;
+		if (dataStartRow >= rows.size()) {
+			if (announceInChat) {
+				sendChat(Minecraft.getMinecraft(),
+						EnumChatFormatting.DARK_AQUA + "[ParkourStrats] " + EnumChatFormatting.RED
+								+ "CSV has header but no data rows.");
+			}
+			return;
+		}
+
+		List<String> header = rows.get(headerRowIndex);
 		SheetHeaderMatcher.Columns cols = SheetHeaderMatcher.match(header);
 
 		// Strengthen matching with strict, index-based fallbacks (supports "by" etc.)
@@ -375,216 +880,138 @@ public class ReminderManager {
 			return;
 		}
 
+		// Section columns are derived from map config (robust: supports any names, and all levels 1...max)
+		int maxLevels = 0;
+		try { maxLevels = map.getMaxSectionLevelsAllowed(); } catch (Throwable ignored) {}
+		if (maxLevels < 0) maxLevels = 0;
+		if (maxLevels > 4) maxLevels = 4;
+
+		int[] sectionCols = new int[maxLevels];
+		for (int i = 0; i < maxLevels; i++) sectionCols[i] = -1;
+
+		for (int lvl = 1; lvl <= maxLevels; lvl++) {
+			String colName = map.getSectionName(lvl - 1);
+			colName = (colName != null) ? colName.trim() : "";
+			if (colName.isEmpty()) continue;
+			sectionCols[lvl - 1] = findHeaderCol(header, colName);
+		}
+
+		// 1) Build template index by (sectionPathKey -> (normJumpName -> list<Jump> in template order))
+		TemplateIndexContext templateIndex = buildTemplateIndexContextBySections(map);
+
+		// 2) Build sheet blocks (1 jump block -> N strategy rows) with carry-down for merged cells
+		// IMPORTANT: start from dataStartRow, not from row 1
+		ArrayList<SheetJumpBlock> blocks = buildSheetJumpBlocks(rows, dataStartRow, cols.jump, sectionCols, maxLevels);
+
 		int imported = 0;
 		int skipped = 0;
 
-		String lastJumpName = "";
+		// Used to avoid mapping the same template jump multiple times in a single sync run (duplicates)
+		java.util.HashSet<Jump> assignedThisRun = new java.util.HashSet<Jump>();
 
-		// Carry-down for context columns (Google Sheets merged cells export to empty CSV cells on subsequent rows)
-		String lastSection = "";
-		String lastSubSection = "";
-		String lastArea = "";
-		String lastCp = "";
-		String lastSp = "";
+		for (int b = 0; b < blocks.size(); b++) {
+			SheetJumpBlock block = blocks.get(b);
+			if (block == null) continue;
 
-		// Build candidate lists once (template order matters) + capture template indices
-		JumpIndexContext indexCtx = buildJumpIndexContext(map);
-		java.util.Map<String, java.util.List<Jump>> jumpsByNormName = indexCtx.jumpsByNormName;
-		java.util.Map<Jump, Integer> templateIndexByJump = indexCtx.templateIndexByJump;
-
-		// Assign a stable "sheet jump index" (1-based) the first time a jump-key appears in the sheet.
-		// This is jump-level order, not strategy-row order.
-		java.util.Map<String, Integer> sheetJumpIndexByKey = new java.util.HashMap<String, Integer>();
-		int nextSheetJumpIndex = 1;
-
-		// Monotonic guard: never map backwards in template order during a single sync run.
-		int lastMatchedTemplateIndex = 0;
-
-		// Occurrence counter per (context + jumpName) - increment ONLY when a new jump block starts in the sheet
-		java.util.Map<String, Integer> occurrenceByKey = new java.util.HashMap<String, Integer>();
-
-		// Optional context columns (if present in sheet)
-		int colSection = findHeaderCol(header, "section");
-		int colSubSection = findHeaderCol(header,
-				"sub-section", "subsection", "sub section", "sub_section",
-				"sub-sections", "subsections", "sub sections", "sub_sections"
-		);
-		int colArea = findHeaderCol(header, "area");
-		int colCp = findHeaderCol(header, "cp", "checkpoint");
-		int colSp = findHeaderCol(header, "sp", "stagepoint", "startpoint", "spawnpoint");
-
-		for (int r = 1; r < rows.size(); r++) {
-			List<String> row = rows.get(r);
-			if (row == null) continue;
-
-			// Detect whether this row starts a NEW jump block (non-empty Jump cell)
-			String rawJumpCell = CsvUtils.getCell(row, cols.jump).trim();
-			boolean isNewJumpBlock = rawJumpCell.length() > 0;
-
-			String jumpName = rawJumpCell;
+			String jumpName = (block.jumpName != null) ? block.jumpName.trim() : "";
 			if (jumpName.isEmpty()) {
-				jumpName = lastJumpName; // carry-down for merged cells
-			} else {
-				lastJumpName = jumpName;
-			}
-
-			if (jumpName == null || jumpName.trim().isEmpty()) {
-				skipped++;
+				skipped += Math.max(1, block.rows.size());
 				continue;
 			}
 
-			// Carry-down for context columns (same rule as jumpName carry-down)
-			String sectionVal = "";
-			if (colSection >= 0) {
-				String v = CsvUtils.getCell(row, colSection).trim();
-				if (v.isEmpty()) v = lastSection;
-				else lastSection = v;
-				sectionVal = v;
-			}
-
-			String subSectionVal = "";
-			if (colSubSection >= 0) {
-				String v = CsvUtils.getCell(row, colSubSection).trim();
-				if (v.isEmpty()) v = lastSubSection;
-				else lastSubSection = v;
-				subSectionVal = v;
-			}
-
-			String areaVal = "";
-			if (colArea >= 0) {
-				String v = CsvUtils.getCell(row, colArea).trim();
-				if (v.isEmpty()) v = lastArea;
-				else lastArea = v;
-				areaVal = v;
-			}
-
-			String cpVal = "";
-			if (colCp >= 0) {
-				String v = CsvUtils.getCell(row, colCp).trim();
-				if (v.isEmpty()) v = lastCp;
-				else lastCp = v;
-				cpVal = v;
-			}
-
-			String spVal = "";
-			if (colSp >= 0) {
-				String v = CsvUtils.getCell(row, colSp).trim();
-				if (v.isEmpty()) v = lastSp;
-				else lastSp = v;
-				spVal = v;
-			}
-
-			// Build a stable occurrence key using resolved (carried-down) context values
-			String key = buildOccurrenceKey(jumpName, sectionVal, subSectionVal, areaVal, cpVal, spVal);
-
-			Integer sheetJumpIndexObj = sheetJumpIndexByKey.get(key);
-			if (sheetJumpIndexObj == null) {
-				sheetJumpIndexObj = Integer.valueOf(nextSheetJumpIndex);
-				sheetJumpIndexByKey.put(key, sheetJumpIndexObj);
-				nextSheetJumpIndex++;
-			}
-			int sheetJumpIndex = sheetJumpIndexObj.intValue();
-
-			// Increment occurrence ONLY when a new jump block starts (or first time we see this key)
-			Integer occObj = occurrenceByKey.get(key);
-			int occ;
-			if (isNewJumpBlock || occObj == null) {
-				occ = (occObj != null) ? (occObj.intValue() + 1) : 1;
-				occurrenceByKey.put(key, Integer.valueOf(occ));
-			} else {
-				occ = occObj.intValue();
-			}
-
-			// Persistent jump identity: key + occurrence (stable across multiple strategy rows)
-			String sheetRowKey = key + "#" + occ;
-
-			ResolvedJump resolved = resolveJumpByNameUsingSheetRowKeyOrOccurrence(
-					map,
-					jumpName.trim(),
-					sheetRowKey,
-					occ,
-					sheetJumpIndex,
-					jumpsByNormName,
-					templateIndexByJump,
-					lastMatchedTemplateIndex,
-					SHEET_JUMP_INDEX_TOLERANCE
+			// Resolve jump deterministically within same section path
+			ResolvedJump resolved = resolveJumpSectionAware(
+					jumpName,
+					block.sectionKey,
+					block.sheetRowKey,
+					templateIndex,
+					assignedThisRun
 			);
 
 			Jump target = (resolved != null) ? resolved.jump : null;
 
 			// Bind only when we are confident and only if the jump is not already bound to a different key.
-			if (target != null && resolved.allowBind && sheetRowKey != null && sheetRowKey.trim().length() > 0) {
+			if (target != null && resolved.allowBind && block.sheetRowKey != null && block.sheetRowKey.trim().length() > 0) {
 				String existingKey = target.getSheetRowKey();
-				if (existingKey.trim().isEmpty()) {
-					target.setSheetRowKey(sheetRowKey); // bind only once
-				} else if (existingKey.equals(sheetRowKey)) {
+				if (existingKey == null) existingKey = "";
+				existingKey = existingKey.trim();
+
+				String incomingKey = block.sheetRowKey.trim();
+
+				if (existingKey.isEmpty()) {
+					target.setSheetRowKey(incomingKey); // bind only once
+				} else if (existingKey.equals(incomingKey)) {
 					// ok, already bound
 				} else {
-					// do not rebind silently (prevents accidental flips)
-					// optionally: count as skipped or log
-				}
-			}
-
-			if (target != null) {
-				Integer tidx = templateIndexByJump.get(target);
-				if (tidx != null && tidx.intValue() > lastMatchedTemplateIndex) {
-					lastMatchedTemplateIndex = tidx.intValue();
+					// do not rebind (prevents accidental flips)
 				}
 			}
 
 			if (target == null) {
 				// Requirement: do not create new jumps without coords
-				skipped++;
+				skipped += Math.max(1, block.rows.size());
 				continue;
 			}
 
-			// Always map by column index (never by "non-empty count"), so empty Strafe/Turn do not shift Author/Tips.
-			ArrayList<String> lines = new ArrayList<String>(8);
-			lines.add(getByCol(row, cols.position));
-			lines.add(getByCol(row, cols.facing));
-			lines.add(getByCol(row, cols.setup));
-			lines.add(getByCol(row, cols.strategy));
-			lines.add(getByCol(row, cols.strafe));
-			lines.add(getByCol(row, cols.turn));
-			lines.add(getByCol(row, cols.author));
-			lines.add(getByCol(row, cols.tips));
+			// Mark assigned so duplicates map deterministically
+			assignedThisRun.add(target);
 
-			lines = ensureEightLines(lines);
-
-			// Skip empty strategies (all fields empty)
-			boolean anyText = false;
-			for (String s : lines) {
-				if (s != null && s.trim().length() > 0) {
-					anyText = true;
-					break;
+			// Apply all strategy rows of this block
+			for (int r = 0; r < block.rows.size(); r++) {
+				List<String> row = block.rows.get(r);
+				if (row == null) {
+					skipped++;
+					continue;
 				}
-			}
-			if (!anyText) {
-				skipped++;
-				continue;
-			}
 
-			// Remove placeholders before first real import into that jump
-			removePlaceholderReminders(target);
+				// Always map by column index (never by "non-empty count"), so empty Strafe/Turn do not shift Author/Tips.
+				ArrayList<String> lines = new ArrayList<String>(8);
+				lines.add(getByCol(row, cols.position));
+				lines.add(getByCol(row, cols.facing));
+				lines.add(getByCol(row, cols.setup));
+				lines.add(getByCol(row, cols.strategy));
+				lines.add(getByCol(row, cols.strafe));
+				lines.add(getByCol(row, cols.turn));
+				lines.add(getByCol(row, cols.author));
+				lines.add(getByCol(row, cols.tips));
 
-			// Strategy identity is core 0..5. Author/Tips (6/7) are metadata that can change without creating a new strategy.
-			Reminder existing = findReminderByCore6(target, lines);
-			if (existing != null) {
-				updateAuthorAndTipsIfChanged(existing, lines);
+				lines = ensureEightLines(lines);
+
+				// Skip empty strategies (all fields empty)
+				boolean anyText = false;
+				for (String s : lines) {
+					if (s != null && s.trim().length() > 0) {
+						anyText = true;
+						break;
+					}
+				}
+				if (!anyText) {
+					skipped++;
+					continue;
+				}
+
+				// Remove placeholders before first real import into that jump
+				removePlaceholderReminders(target);
+
+				// Strategy identity is core 0..5. Author/Tips (6/7) are metadata that can change without creating a new strategy.
+				Reminder existing = findReminderByCore6(target, lines);
+				if (existing != null) {
+					updateAuthorAndTipsIfChanged(existing, lines);
+					imported++;
+					continue;
+				}
+
+				if (target.getReminders() == null) {
+					target.setReminders(new ArrayList<Reminder>());
+				}
+
+				target.getReminders().add(new Reminder(lines));
+				if (target.getActiveReminderIndex() < 0) {
+					target.setActiveReminderIndex(0);
+				}
+
 				imported++;
-				continue;
 			}
-
-			if (target.getReminders() == null) {
-				target.setReminders(new ArrayList<Reminder>());
-			}
-
-			target.getReminders().add(new Reminder(lines));
-			if (target.getActiveReminderIndex() < 0) {
-				target.setActiveReminderIndex(0);
-			}
-
-			imported++;
 		}
 
 		map.setLastSheetSyncMs(System.currentTimeMillis());
@@ -602,157 +1029,286 @@ public class ReminderManager {
 		}
 	}
 
-	// Build candidates in template order + capture template indices (1-based)
-	private static JumpIndexContext buildJumpIndexContext(ParkourMap map) {
-		java.util.Map<String, java.util.List<Jump>> out = new java.util.HashMap<String, java.util.List<Jump>>();
-		java.util.Map<Jump, Integer> templateIndexByJump = new java.util.HashMap<Jump, Integer>();
+	// -------------------------
+// Section-aware CSV blocks + matching
+// -------------------------
 
-		if (map == null || map.getJumps() == null) {
-			return new JumpIndexContext(out, templateIndexByJump);
+	private static final class SheetJumpBlock {
+		String jumpName;       // carried down
+		String sectionKey;     // normalized section path key
+		String sheetRowKey;    // section-aware persistent identity: (jump+sectionPath)+#occurrence
+		final ArrayList<List<String>> rows = new ArrayList<List<String>>();
+	}
+
+	private static String buildSectionKeyFromValues(String section, String subSection, String area, String cp, String sp) {
+		StringBuilder sb = new StringBuilder();
+
+		// Keep the same labels you already use in buildOccurrenceKey(...)
+		if (section != null && !section.trim().isEmpty()) {
+			sb.append("|S=").append(CsvUtils.normalizeKey(section));
+		}
+		if (subSection != null && !subSection.trim().isEmpty()) {
+			sb.append("|SS=").append(CsvUtils.normalizeKey(subSection));
+		}
+		if (area != null && !area.trim().isEmpty()) {
+			sb.append("|A=").append(CsvUtils.normalizeKey(area));
+		}
+		if (cp != null && !cp.trim().isEmpty()) {
+			sb.append("|CP=").append(CsvUtils.normalizeKey(cp));
+		}
+		if (sp != null && !sp.trim().isEmpty()) {
+			sb.append("|SP=").append(CsvUtils.normalizeKey(sp));
 		}
 
-		int templateIndex = 1; // 1-based to match human "ID=23" reasoning
-		for (Jump j : map.getJumps()) {
+		return sb.toString();
+	}
+
+	private static ArrayList<SheetJumpBlock> buildSheetJumpBlocks(
+			List<List<String>> rows,
+			int startRow,
+			int colJump,
+			int[] sectionCols,
+			int maxLevels
+	) {
+		ArrayList<SheetJumpBlock> out = new ArrayList<SheetJumpBlock>();
+		if (rows == null || rows.isEmpty()) return out;
+
+		// Safety: never start before row 1 (row 0 can be random, and header may be above startRow anyway)
+		int r0 = startRow;
+		if (r0 < 1) r0 = 1;
+		if (r0 >= rows.size()) return out;
+
+		String lastJumpName = "";
+
+		// Carry-down for section columns (merged cells)
+		String[] lastLevelVals = new String[Math.max(0, maxLevels)];
+		for (int i = 0; i < lastLevelVals.length; i++) lastLevelVals[i] = "";
+
+		// Occurrence counter per (jumpName + sectionPathKey), increment only at new jump blocks
+		java.util.HashMap<String, Integer> occurrenceByKey = new java.util.HashMap<String, Integer>();
+
+		SheetJumpBlock current = null;
+
+		for (int r = r0; r < rows.size(); r++) {
+			List<String> row = rows.get(r);
+			if (row == null) continue;
+
+			String rawJumpCell = (colJump >= 0) ? CsvUtils.getCell(row, colJump).trim() : "";
+			boolean isNewJumpBlock = rawJumpCell.length() > 0;
+
+			String jumpName = rawJumpCell;
+			if (jumpName.isEmpty()) {
+				jumpName = lastJumpName; // carry-down for merged cells
+			} else {
+				lastJumpName = jumpName;
+			}
+
+			if (jumpName == null || jumpName.trim().isEmpty()) {
+				// If sheet starts with empties, we cannot create a valid block yet.
+				continue;
+			}
+
+			// Read section path values (L1...Ln) with carry-down
+			String[] pathVals = new String[Math.max(0, maxLevels)];
+			boolean hasAnyPathVal = false;
+
+			for (int i = 0; i < maxLevels; i++) {
+				String v = "";
+				int col = (sectionCols != null && i < sectionCols.length) ? sectionCols[i] : -1;
+
+				if (col >= 0) {
+					String raw = CsvUtils.getCell(row, col);
+					raw = (raw != null) ? raw.trim() : "";
+
+					if (raw.isEmpty()) {
+						// Carry-down (merged cells)
+						v = lastLevelVals[i];
+					} else {
+						// New value on this level
+						v = raw;
+						lastLevelVals[i] = raw;
+
+						// IMPORTANT: changing a higher level invalidates all lower levels
+						for (int j = i + 1; j < maxLevels; j++) {
+							lastLevelVals[j] = "";
+						}
+					}
+				}
+
+				pathVals[i] = (v != null) ? v : "";
+				if (!pathVals[i].trim().isEmpty()) hasAnyPathVal = true;
+			}
+
+			// Build section key from all available levels (strongest)
+			String sectionKey = buildSectionKeyFromPathValues(pathVals, maxLevels, hasAnyPathVal);
+
+			if (isNewJumpBlock || current == null) {
+				current = new SheetJumpBlock();
+				current.jumpName = jumpName;
+				current.sectionKey = sectionKey;
+
+				// section-aware identity: normalized jump name + section path
+				String baseKey = CsvUtils.normalizeKey(jumpName) + sectionKey;
+
+				Integer occObj = occurrenceByKey.get(baseKey);
+				int occ = (occObj != null) ? (occObj.intValue() + 1) : 1;
+				occurrenceByKey.put(baseKey, Integer.valueOf(occ));
+
+				current.sheetRowKey = baseKey + "#" + occ;
+
+				out.add(current);
+			}
+
+			current.rows.add(row);
+		}
+
+		return out;
+	}
+
+	private static final class TemplateIndexContext {
+		// sectionKey -> normJumpName -> list of Jump in template order
+		final java.util.HashMap<String, java.util.HashMap<String, java.util.ArrayList<Jump>>> bySection = new java.util.HashMap<String, java.util.HashMap<String, java.util.ArrayList<Jump>>>();
+
+		// For fast persisted binding lookup
+		final java.util.HashMap<String, Jump> bySheetRowKey = new java.util.HashMap<String, Jump>();
+	}
+
+	private static TemplateIndexContext buildTemplateIndexContextBySections(ParkourMap map) {
+		TemplateIndexContext ctx = new TemplateIndexContext();
+		if (map == null || map.getJumps() == null) return ctx;
+
+		ArrayList<Jump> jumps = map.getJumps();
+
+		for (int i = 0; i < jumps.size(); i++) {
+			Jump j = jumps.get(i);
 			if (j == null) continue;
 
-			// Skip unset coords (you require coords)
+			// Require coords (per your rule)
 			if (j.getX() == 0 && j.getY() == 0 && j.getZ() == 0) continue;
 
-			templateIndexByJump.put(j, Integer.valueOf(templateIndex));
-			templateIndex++;
+			// Persisted key index (strongest)
+			String k = j.getSheetRowKey();
+			if (k != null) {
+				k = k.trim();
+				if (!k.isEmpty() && !ctx.bySheetRowKey.containsKey(k)) {
+					ctx.bySheetRowKey.put(k, j);
+				}
+			}
 
-			String id = j.getId() != null ? j.getId() : "";
-			String norm = CsvUtils.normalizeKey(id);
+			// Section path for this template jump index
+			String sectionKey = buildSectionKeyForTemplateIndex(map, i);
+			String normName = CsvUtils.normalizeKey(j.getId());
 
-			java.util.List<Jump> list = out.get(norm);
+			java.util.HashMap<String, java.util.ArrayList<Jump>> byName = ctx.bySection.get(sectionKey);
+			if (byName == null) {
+				byName = new java.util.HashMap<String, java.util.ArrayList<Jump>>();
+				ctx.bySection.put(sectionKey, byName);
+			}
+
+			java.util.ArrayList<Jump> list = byName.get(normName);
 			if (list == null) {
 				list = new java.util.ArrayList<Jump>();
-				out.put(norm, list);
+				byName.put(normName, list);
 			}
 			list.add(j);
 		}
 
-		return new JumpIndexContext(out, templateIndexByJump);
+		return ctx;
 	}
 
-	private static ResolvedJump resolveJumpByNameUsingSheetRowKeyOrOccurrence(
-			ParkourMap map,
+	private static String buildSectionKeyForTemplateIndex(ParkourMap map, int jumpIndex) {
+		if (map == null) return "";
+
+		int max = 0;
+		try { max = map.getMaxSectionLevelsAllowed(); } catch (Throwable ignored) { }
+		if (max < 1) return "";
+		if (max > 4) max = 4;
+
+		String[] pathVals = new String[max];
+		boolean hasAny = false;
+
+		for (int lvl = 1; lvl <= max; lvl++) {
+			String v = getSectionNameAtIndex(map, lvl, jumpIndex);
+			v = (v != null) ? v.trim() : "";
+			pathVals[lvl - 1] = v;
+			if (!v.isEmpty()) hasAny = true;
+		}
+
+		return buildSectionKeyFromPathValues(pathVals, max, hasAny);
+	}
+
+	private static String buildSectionKeyFromPathValues(String[] pathVals, int maxLevels, boolean hasAnyPathVal) {
+		if (!hasAnyPathVal) return "";
+
+		StringBuilder sb = new StringBuilder();
+
+		int usable = Math.min(maxLevels, pathVals != null ? pathVals.length : 0);
+		for (int i = 0; i < usable; i++) {
+			String v = pathVals[i];
+			v = (v != null) ? v.trim() : "";
+			if (v.isEmpty()) continue;
+
+			sb.append("|L").append(i + 1).append("=").append(CsvUtils.normalizeKey(v));
+		}
+
+		return sb.toString();
+	}
+
+	private static String getSectionNameAtIndex(ParkourMap map, int levelOneBased, int jumpIndex) {
+		if (map == null) return "";
+		ArrayList<MapSection> secs = map.getSectionsForLevel(levelOneBased);
+		if (secs == null || secs.isEmpty()) return "";
+
+		MapSection s = findSectionContainingIndex(secs, jumpIndex);
+		if (s == null) return "";
+
+		String n = s.getName();
+		return (n != null) ? n.trim() : "";
+	}
+
+	private static ResolvedJump resolveJumpSectionAware(
 			String jumpName,
+			String sectionKey,
 			String sheetRowKey,
-			int occurrence,
-			int sheetJumpIndex,
-			java.util.Map<String, java.util.List<Jump>> jumpsByNormName,
-			java.util.Map<Jump, Integer> templateIndexByJump,
-			int lastMatchedTemplateIndex,
-			int tolerance
+			TemplateIndexContext templateIndex,
+			java.util.HashSet<Jump> assignedThisRun
 	) {
-		if (map == null || jumpName == null) return null;
+		if (jumpName == null) return null;
+		if (sectionKey == null) sectionKey = "";
+		if (templateIndex == null) return null;
+
+		// 1) Prefer persisted binding (strongest)
+		if (sheetRowKey != null) {
+			String k = sheetRowKey.trim();
+			if (!k.isEmpty()) {
+				Jump bound = templateIndex.bySheetRowKey.get(k);
+				if (bound != null) {
+					return new ResolvedJump(bound, true);
+				}
+			}
+		}
 
 		String norm = CsvUtils.normalizeKey(jumpName);
-		java.util.List<Jump> candidates = (jumpsByNormName != null) ? jumpsByNormName.get(norm) : null;
+
+		java.util.HashMap<String, java.util.ArrayList<Jump>> byName = templateIndex.bySection.get(sectionKey);
+		java.util.ArrayList<Jump> candidates = (byName != null) ? byName.get(norm) : null;
+
 		if (candidates == null || candidates.isEmpty()) {
+			// No exact candidates in this section.
+			// DO NOT fall back globally.
 			return null;
 		}
 
-		// 1) Prefer persisted binding (stable even if map.getJumps() order changes)
-		if (sheetRowKey != null && sheetRowKey.trim().length() > 0) {
-			for (Jump j : candidates) {
-				if (j == null) continue;
-				if (sheetRowKey.equals(j.getSheetRowKey())) {
-					return new ResolvedJump(j, true); // safe
-				}
-			}
-		}
-
-		// 2) If only one candidate, take it
-		if (candidates.size() == 1) {
-			return new ResolvedJump(candidates.get(0), true); // safe
-		}
-
-		// 3) Primary safety mapping for duplicates:
-		//    choose the candidate with the closest template index to the sheet jump index,
-		//    constrained by tolerance and monotonicity (never go backwards in template order).
-		Jump best = null;
-		int bestDelta = Integer.MAX_VALUE;
-
-		for (Jump j : candidates) {
-			if (j == null) continue;
-			if (templateIndexByJump == null) continue;
-
-			Integer tidxObj = templateIndexByJump.get(j);
-			if (tidxObj == null) continue;
-			int templateIdx = tidxObj.intValue();
-
-			// Monotonic guard: never map backwards during this sync run.
-			if (templateIdx <= lastMatchedTemplateIndex) {
-				continue;
-			}
-
-			int delta = Math.abs(templateIdx - sheetJumpIndex);
-			if (delta > tolerance) {
-				continue;
-			}
-
-			if (delta < bestDelta) {
-				bestDelta = delta;
-				best = j;
-			}
-		}
-
-		if (best != null) {
-			return new ResolvedJump(best, true); // safe
-		}
-
-		// 4) Secondary fallback: old occurrence logic (best-effort),
-		//    BUT only if it does not violate monotonicity.
-		int idx = occurrence - 1;
-		if (idx >= 0 && idx < candidates.size()) {
-			Jump j = candidates.get(idx);
-			if (j != null && templateIndexByJump != null) {
-				Integer tidxObj = templateIndexByJump.get(j);
-				if (tidxObj != null && tidxObj.intValue() > lastMatchedTemplateIndex) {
-					return new ResolvedJump(j, true); // safe
-				}
-			}
-		}
-
-		// 5) LAST RESORT: nearest-by-occurrence within tolerance.
-		// Only used when the occurrence index is out of range OR monotonic occurrence mapping failed above.
-		// IMPORTANT: Do not allow persisting sheetRowKey on this "approx" mapping.
-		int targetIndex = idx;
-
-		int bestIndex = -1;
-		int bestDist = Integer.MAX_VALUE;
-		boolean tie = false;
-
+		// 2) Deterministic duplicate handling: first unassigned in template order
 		for (int i = 0; i < candidates.size(); i++) {
 			Jump j = candidates.get(i);
 			if (j == null) continue;
-
-			// Must respect monotonic guard if we can resolve template index.
-			if (templateIndexByJump != null) {
-				Integer tidxObj = templateIndexByJump.get(j);
-				if (tidxObj != null && tidxObj.intValue() <= lastMatchedTemplateIndex) {
-					continue;
-				}
-			}
-
-			int dist = Math.abs(i - targetIndex);
-			if (dist < bestDist) {
-				bestDist = dist;
-				bestIndex = i;
-				tie = false;
-			} else if (dist == bestDist) {
-				tie = true;
-			}
+			if (assignedThisRun != null && assignedThisRun.contains(j)) continue;
+			return new ResolvedJump(j, true);
 		}
 
-		if (!tie && bestIndex >= 0 && bestDist <= DUPLICATE_OCCURRENCE_NEAREST_TOLERANCE) {
-			return new ResolvedJump(candidates.get(bestIndex), false); // approx -> do NOT bind
-		}
-
-		// If we cannot map safely, skip.
-		return null;
+		// 3) If all candidates are already assigned (rare), just use the first (do not bind again)
+		return new ResolvedJump(candidates.get(0), false);
 	}
 
 	// -------------------------
@@ -768,6 +1324,10 @@ public class ReminderManager {
 
 	// Runtime cache: we persist only URL/index/enabled in ParkourMap; the list is kept in memory.
 	private static java.util.List<String> placeholderJumpNames = new java.util.ArrayList<String>();
+
+	// Runtime cache: sheet-driven Level 1 sections for placeholder pager
+	private static java.util.List<SheetJumpNameExtractor.PlaceholderSection> placeholderSectionsL1
+			= new java.util.ArrayList<SheetJumpNameExtractor.PlaceholderSection>();
 
 	public static boolean isAnySheetSyncInProgress() {
 		return SheetSyncManager.isSyncInProgress();
@@ -806,6 +1366,73 @@ public class ReminderManager {
 		if (idx < 0 || idx >= placeholderJumpNames.size()) return "";
 		String s = placeholderJumpNames.get(idx);
 		return s != null ? s : "";
+	}
+
+	public static int getCurrentPlaceholderSectionIndex() {
+		if (placeholderSectionsL1 == null || placeholderSectionsL1.isEmpty()) return -1;
+
+		int jumpIdx = getPlaceholderJumpIndex(); // clamps + persists map index
+		int best = -1;
+
+		// 1) Exact section containing the current jump index
+		for (int i = 0; i < placeholderSectionsL1.size(); i++) {
+			SheetJumpNameExtractor.PlaceholderSection s = placeholderSectionsL1.get(i);
+			if (s == null) continue;
+
+			int a = s.startJumpIndex;
+			int b = s.endJumpIndex;
+
+			if (a <= jumpIdx && jumpIdx <= b) {
+				return i;
+			}
+		}
+
+		// 2) Fallback: nearest previous section by start index
+		int bestStart = Integer.MIN_VALUE;
+		for (int i = 0; i < placeholderSectionsL1.size(); i++) {
+			SheetJumpNameExtractor.PlaceholderSection s = placeholderSectionsL1.get(i);
+			if (s == null) continue;
+
+			int a = s.startJumpIndex;
+			if (a <= jumpIdx && a > bestStart) {
+				bestStart = a;
+				best = i;
+			}
+		}
+
+		// If jumpIdx is before the first section start, best stays -1 -> return 0 (safe default)
+		if (best < 0) return 0;
+		return best;
+	}
+
+	public static String getCurrentPlaceholderSectionName() {
+		int idx = getCurrentPlaceholderSectionIndex();
+		if (idx < 0) return "";
+
+		if (placeholderSectionsL1 == null || idx >= placeholderSectionsL1.size()) return "";
+
+		SheetJumpNameExtractor.PlaceholderSection s = placeholderSectionsL1.get(idx);
+		if (s == null) return "";
+
+		String nm = s.name;
+		return nm != null ? nm : "";
+	}
+
+	public static void setPlaceholderJumpIndex(int idx) {
+		ensureStoresInitialized();
+		ParkourMap map = selectedMap;
+		if (map == null) return;
+		if (!map.isPlaceholderSyncEnabled()) return;
+
+		int count = getPlaceholderJumpCount();
+		if (count <= 0) return;
+
+		int clamped = idx;
+		if (clamped < 0) clamped = 0;
+		if (clamped >= count) clamped = count - 1;
+
+		map.setPlaceholderJumpIndex(clamped);
+		saveToFile();
 	}
 
 	public static void prevPlaceholderJump() {
@@ -889,8 +1516,57 @@ public class ReminderManager {
 		map.setPlaceholderJumpIndex(0);
 
 		placeholderJumpNames = new java.util.ArrayList<String>();
+		placeholderSectionsL1 = new java.util.ArrayList<SheetJumpNameExtractor.PlaceholderSection>();
 
 		saveToFile();
+	}
+
+	public static java.util.List<SheetJumpNameExtractor.PlaceholderSection> getPlaceholderSectionsL1() {
+		if (placeholderSectionsL1 == null) {
+			return new java.util.ArrayList<SheetJumpNameExtractor.PlaceholderSection>();
+		}
+		return placeholderSectionsL1;
+	}
+
+	public static int getPlaceholderSectionCount() {
+		return placeholderSectionsL1 != null ? placeholderSectionsL1.size() : 0;
+	}
+
+	public static SheetJumpNameExtractor.PlaceholderSection getPlaceholderSectionForJumpIndex(int jumpIndex) {
+		if (placeholderSectionsL1 == null) return null;
+
+		for (int i = 0; i < placeholderSectionsL1.size(); i++) {
+			SheetJumpNameExtractor.PlaceholderSection s = placeholderSectionsL1.get(i);
+			if (s == null) continue;
+			if (jumpIndex >= s.startJumpIndex && jumpIndex <= s.endJumpIndex) {
+				return s;
+			}
+		}
+		return null;
+	}
+
+	public static void jumpToPlaceholderSection(int sectionIndex) {
+		ensureStoresInitialized();
+		ParkourMap map = selectedMap;
+		if (map == null) return;
+
+		// Keep behavior consistent with other placeholder navigation.
+		if (!map.isPlaceholderSyncEnabled()) return;
+
+		if (placeholderSectionsL1 == null || placeholderSectionsL1.isEmpty()) return;
+
+		int count = getPlaceholderJumpCount();
+		if (count <= 0) return;
+
+		int idx = sectionIndex;
+		if (idx < 0) idx = 0;
+		if (idx >= placeholderSectionsL1.size()) idx = placeholderSectionsL1.size() - 1;
+
+		SheetJumpNameExtractor.PlaceholderSection s = placeholderSectionsL1.get(idx);
+		if (s == null) return;
+
+		// Delegate clamping + persistence to the canonical setter.
+		setPlaceholderJumpIndex(s.startJumpIndex);
 	}
 
 	/**
@@ -929,13 +1605,20 @@ public class ReminderManager {
 					@Override
 					public void run() {
 						try {
-							java.util.List<String> names = SheetJumpNameExtractor.extractJumpNames(csvText);
-							if (names == null || names.isEmpty()) {
+							SheetJumpNameExtractor.Result res = SheetJumpNameExtractor.extract(csvText);
+							if (res == null || res.jumpNames == null || res.jumpNames.isEmpty()) {
 								if (cb != null) cb.onError("No jump names found in CSV.");
 								return;
 							}
 
-							placeholderJumpNames = new java.util.ArrayList<String>(names);
+							placeholderJumpNames = new java.util.ArrayList<String>(res.jumpNames);
+
+							// Store sheet-driven level-1 sections for placeholder pager
+							if (res.sectionsL1 != null) {
+								placeholderSectionsL1 = new java.util.ArrayList<SheetJumpNameExtractor.PlaceholderSection>(res.sectionsL1);
+							} else {
+								placeholderSectionsL1 = new java.util.ArrayList<SheetJumpNameExtractor.PlaceholderSection>();
+							}
 
 							// Clamp saved index
 							int idx = map.getPlaceholderJumpIndex();
@@ -2588,6 +3271,11 @@ public class ReminderManager {
 	}
 
 	public static boolean createMap(ServerProfile server, String id) {
+		// Backward-compatible overload: no sections by default.
+		return createMap(server, id, false, 0, null);
+	}
+
+	public static boolean createMap(ServerProfile server, String id, boolean sectionsEnabled, int sectionsCount, String[] sectionNames) {
 		ensureStoresInitialized();
 		if (server == null) return false;
 
@@ -2599,24 +3287,61 @@ public class ReminderManager {
 		ParkourMap m = new ParkourMap();
 		m.setId(id);
 		m.setJumps(new ArrayList<Jump>());
+
+		// Sections config (offline v1.6)
+		m.setSectionsEnabled(sectionsEnabled);
+		if (!sectionsEnabled) {
+			m.setSectionsCountRaw(0);
+		} else {
+			// Force 1..4
+			int c = sectionsCount;
+			if (c < 1) c = 1;
+			if (c > 4) c = 4;
+			m.setSectionsCountRaw(c);
+		}
+		if (sectionNames != null) {
+			m.setSectionNames(sectionNames);
+		}
+
 		server.getMaps().add(m);
 
 		saveToFile();
 		return true;
 	}
 
-	public static boolean renameMap(ServerProfile server, ParkourMap map, String newId) {
+	public static boolean updateMapConfig(ServerProfile server, ParkourMap map, String newId,
+										  boolean sectionsEnabled, int sectionsCount, String[] sectionNames) {
 		ensureStoresInitialized();
 		if (server == null || map == null) return false;
 
 		if (isProtectedServer(server)) return false;
 
-		if (!isValidId(newId)) return false;
+		String t = (newId != null) ? newId.trim() : "";
+		if (!isValidId(t)) return false;
 
-		ParkourMap existing = findMapById(server, newId);
+		ParkourMap existing = findMapById(server, t);
 		if (existing != null && existing != map) return false;
 
-		map.setId(newId);
+		// Apply id
+		map.setId(t);
+
+		// Apply sections config
+		map.setSectionsEnabled(sectionsEnabled);
+
+		if (!sectionsEnabled) {
+			map.setSectionsCountRaw(0);
+			// Keep names as-is or reset; keeping is fine (future re-enable).
+		} else {
+			int c = sectionsCount;
+			if (c < 1) c = 1;
+			if (c > 4) c = 4;
+			map.setSectionsCountRaw(c);
+
+			if (sectionNames != null) {
+				map.setSectionNames(sectionNames);
+			}
+		}
+
 		saveToFile();
 		return true;
 	}
@@ -2670,54 +3395,585 @@ public class ReminderManager {
 		return map.getJumps();
 	}
 
-	public static boolean renameJump(ParkourMap map, Jump jump, String newId) {
+	// Treat a section as "inactive" if it does not have a valid range.
+	// Inactive sections remain stored, but the GUI should not render them.
+	private static boolean isSectionRangeActive(MapSection s, int jumpsSize) {
+		if (s == null) return false;
+		int a = s.getStartJumpIndex();
+		int b = s.getEndJumpIndex();
+
+		if (a < 0 || b < 0) return false;
+		if (a > b) return false;
+		if (jumpsSize <= 0) return false;
+		if (a >= jumpsSize || b >= jumpsSize) return false;
+
+		return true;
+	}
+
+	private static void deactivateSectionRange(MapSection s) {
+		if (s == null) return;
+		s.setStartJumpIndex(-1);
+		s.setEndJumpIndex(-1);
+	}
+
+	public static void insertJumpAtEndOfSection(ParkourMap map, int levelOneBased, MapSection targetSection, Jump jump) {
+		if (map == null || targetSection == null || jump == null) {
+			return;
+		}
+
+		int max = map.getMaxSectionLevelsAllowed();
+		if (max <= 0) {
+			return;
+		}
+		if (levelOneBased < 1 || levelOneBased > max) {
+			return;
+		}
+
+		ArrayList<Jump> jumps = map.getJumps();
+		if (jumps == null) {
+			return;
+		}
+
+		int oldIndex = indexOfJumpByReference(jumps, jump);
+
+		// Remove existing instance (if present) and shift section indices.
+		if (oldIndex >= 0) {
+			jumps.remove(oldIndex);
+			shiftAllSectionRangesAfterRemove(map, oldIndex, max);
+		}
+
+		int sizeAfterRemove = jumps.size();
+		boolean active = isSectionRangeActive(targetSection, sizeAfterRemove);
+
+		// Capture the target end BEFORE insertion, after potential removal-shifts.
+		// This is the boundary we want to "stick to" for any other sections that ended here.
+		int oldTargetEnd = -1;
+		if (active) {
+			oldTargetEnd = targetSection.getEndJumpIndex();
+		}
+
+		int insertPos;
+		if (!active) {
+			// Inactive section -> append to end
+			insertPos = jumps.size();
+		} else {
+			insertPos = targetSection.getEndJumpIndex() + 1;
+			if (insertPos < 0) insertPos = 0;
+			if (insertPos > jumps.size()) insertPos = jumps.size();
+		}
+
+		// True only for the "insert at end of the section" scenario (not just any insert).
+		boolean isInsertAtEndOfActiveSection = active && (oldTargetEnd >= 0) && (insertPos == oldTargetEnd + 1);
+
+		jumps.add(insertPos, jump);
+
+		// Shift indices for ALL sections in ALL levels due to insertion.
+		shiftAllSectionRangesAfterInsert(map, insertPos, max);
+
+		if (!active) {
+			// Activate target section.
+			targetSection.setStartJumpIndex(insertPos);
+			targetSection.setEndJumpIndex(insertPos);
+		} else {
+			if (isInsertAtEndOfActiveSection) {
+				// NEW RULE:
+				// If we inserted at the end of this section, extend ALL active sections (any level)
+				// that ended exactly at the same old end boundary.
+				extendAllSectionEndsThatWereAt(map, oldTargetEnd, max);
+
+				// NOTE: targetSection is included in the extension above,
+				// so we do NOT manually do targetSection.setEndJumpIndex(end+1) here.
+			} else {
+				// Insert happened inside the section (or clamped away from exact end) -> only target should extend.
+				targetSection.setEndJumpIndex(targetSection.getEndJumpIndex() + 1);
+			}
+		}
+
+		saveToFile();
+	}
+
+	/**
+	 * Extends endJumpIndex by +1 for all ACTIVE sections in ALL levels
+	 * that ended exactly at oldEndIndex.
+	 *
+	 * This is used when inserting a jump at the end of a section, to keep
+	 * other "aligned" sections (parents/children on other levels) ending at the same boundary.
+	 */
+	private static void extendAllSectionEndsThatWereAt(ParkourMap map, int oldEndIndex, int maxLevel) {
+		if (map == null) return;
+		if (oldEndIndex < 0) return;
+
+		for (int lvl = 1; lvl <= maxLevel; lvl++) {
+			ArrayList<MapSection> sections = map.getSectionsForLevel(lvl);
+			if (sections == null || sections.isEmpty()) continue;
+
+			for (int i = 0; i < sections.size(); i++) {
+				MapSection s = sections.get(i);
+				if (s == null) continue;
+
+				int start = s.getStartJumpIndex();
+				int end = s.getEndJumpIndex();
+
+				// Inactive sections -> ignore
+				if (start < 0 || end < 0) continue;
+
+				// Normalize for safety
+				if (end < start) {
+					int t = start;
+					start = end;
+					end = t;
+				}
+
+				if (end == oldEndIndex) {
+					s.setEndJumpIndex(end + 1);
+				}
+			}
+		}
+	}
+
+	public static void moveExistingJumpToEndOfSection(ParkourMap map, int levelOneBased, MapSection targetSection, Jump jump) {
+		ensureStoresInitialized();
+		if (map == null || targetSection == null || jump == null) return;
+
+		insertJumpAtEndOfSection(map, levelOneBased, targetSection, jump);
+	}
+
+	/**
+	 * Shifts section start/end indices by +1 for all sections in all levels
+	 * when a new jump is inserted at insertPos in the jumps list.
+	 */
+	private static void shiftAllSectionRangesAfterInsert(ParkourMap map, int insertPos, int maxLevel) {
+		if (map == null) return;
+
+		for (int lvl = 1; lvl <= maxLevel; lvl++) {
+			ArrayList<MapSection> sections = map.getSectionsForLevel(lvl);
+			if (sections == null) continue;
+
+			for (int i = 0; i < sections.size(); i++) {
+				MapSection s = sections.get(i);
+				if (s == null) continue;
+
+				int start = s.getStartJumpIndex();
+				int end = s.getEndJumpIndex();
+
+				// Inactive section -> keep as inactive
+				if (start < 0 || end < 0) {
+					continue;
+				}
+
+				// If insertion is before or at start, both start and end shift.
+				if (start >= insertPos) {
+					start += 1;
+					end += 1;
+				}
+				// If insertion is inside the section range (before or at end), end shifts.
+				else if (end >= insertPos) {
+					end += 1;
+				}
+
+				s.setStartJumpIndex(start);
+				s.setEndJumpIndex(end);
+			}
+		}
+	}
+
+	/**
+	 * Shifts section start/end indices after a jump is removed.
+	 * If a section becomes invalid/out-of-range, it is deactivated (-1...-1) so it exists but is not rendered.
+	 */
+	private static void shiftAllSectionRangesAfterRemove(ParkourMap map, int removedIndex, int maxLevels) {
+		if (map == null) return;
+
+		if (maxLevels < 1) return;
+		if (maxLevels > 4) maxLevels = 4;
+
+		ArrayList<Jump> jumps = map.getJumps();
+		int jumpCount = (jumps != null) ? jumps.size() : 0;
+
+		for (int lvl = 1; lvl <= maxLevels; lvl++) {
+			ArrayList<MapSection> secs = map.getSectionsForLevel(lvl);
+			if (secs == null || secs.isEmpty()) continue;
+
+			for (int i = 0; i < secs.size(); i++) {
+				MapSection s = secs.get(i);
+				if (s == null) continue;
+
+				int start = s.getStartJumpIndex();
+				int end = s.getEndJumpIndex();
+
+				// Inactive section -> keep as inactive
+				if (start < 0 || end < 0) {
+					continue;
+				}
+
+				// If the removed index is before the section, shift the whole range left.
+				if (removedIndex < start) {
+					start -= 1;
+					end -= 1;
+				}
+				// If removed index was inside the section, the section loses one element.
+				else if (removedIndex >= start && removedIndex <= end) {
+					end -= 1;
+				}
+				// else: removedIndex > end => unaffected
+
+				// Validate against current jump count AFTER removal.
+				// If out-of-range or empty/invalid, deactivate it instead of clamping.
+				if (jumpCount <= 0) {
+					deactivateSectionRange(s);
+					continue;
+				}
+
+				if (end < start || end < 0 || start < 0) {
+					deactivateSectionRange(s);
+					continue;
+				}
+
+				// Out-of-range after shift (e.g., removed last jump, or section was at the end)
+				if (start >= jumpCount || end >= jumpCount) {
+					deactivateSectionRange(s);
+					continue;
+				}
+
+				s.setStartJumpIndex(start);
+				s.setEndJumpIndex(end);
+			}
+		}
+	}
+
+	public static boolean moveJumpByOneRespectingSections(ParkourMap map, Jump jump, int delta) {
 		ensureStoresInitialized();
 		if (map == null || jump == null) return false;
-		if (!isValidId(newId)) return false;
+		if (delta != -1 && delta != 1) return false;
 
-		// Allow duplicate names; name alone is not unique.
-		jump.setId(newId);
+		ArrayList<Jump> jumps = map.getJumps();
+		if (jumps == null || jumps.size() <= 1) return false;
+
+		int idx = indexOfJumpByReference(jumps, jump);
+		if (idx < 0) return false;
+
+		int otherIdx = idx + delta;
+		if (otherIdx < 0 || otherIdx >= jumps.size()) return false;
+
+		int maxLevels = 0;
+		try {
+			maxLevels = map.getMaxSectionLevelsAllowed();
+		} catch (Throwable ignored) { }
+
+		if (maxLevels < 1) {
+			// No sections configured -> plain swap by one.
+			java.util.Collections.swap(jumps, idx, otherIdx);
+			saveToFile();
+			return true;
+		}
+		if (maxLevels > 4) maxLevels = 4;
+
+		// Try to shift section boundaries on ALL levels where a boundary exists at this move position.
+		boolean shiftedAny = shiftBoundariesAllLevels(map, idx, delta, maxLevels);
+
+		if (!shiftedAny) {
+			// No boundary at any level -> normal swap by one.
+			java.util.Collections.swap(jumps, idx, otherIdx);
+		} else {
+			// Minimal non-invasive cleanup:
+			// If shifting boundaries emptied any section, deactivate it (-1/-1),
+			// so it disappears from the table but stays in the section list.
+			deactivateEmptySectionsAfterBoundaryShift(map, maxLevels);
+		}
+
+		// IMPORTANT: keep empty sections (do NOT remove them automatically).
+		// No cleanupEmptySections(map) here.
+
 		saveToFile();
 		return true;
+	}
+
+	private static void deactivateEmptySectionsAfterBoundaryShift(ParkourMap map, int maxLevels) {
+		if (map == null) return;
+		if (maxLevels < 1) return;
+		if (maxLevels > 4) maxLevels = 4;
+
+		for (int lvl = 1; lvl <= maxLevels; lvl++) {
+			ArrayList<MapSection> secs = map.getSectionsForLevel(lvl);
+			if (secs == null || secs.isEmpty()) continue;
+
+			for (int i = 0; i < secs.size(); i++) {
+				MapSection s = secs.get(i);
+				if (s == null) continue;
+
+				int start = s.getStartJumpIndex();
+				int end = s.getEndJumpIndex();
+
+				// Already inactive -> keep inactive
+				if (start < 0 || end < 0) continue;
+
+				// If boundary shifting made the section empty, deactivate it.
+				// This matches the "all jumps removed from the section" behavior.
+				if (end < start) {
+					deactivateSectionRange(s);
+				}
+			}
+		}
+	}
+
+	/**
+	 * Shifts section boundaries by one step across ALL levels (1...maxLevels) where a boundary exists.
+	 *
+	 * Supports 3 cases per level:
+	 *  A) left != null && right != null && left != right   (between two sibling sections)
+	 *  B) left != null && right == null                    (between a section and "no subsection" area)
+	 *  C) left == null && right != null                    (between "no subsection" area and a section)
+	 *
+	 * BUT: For cases B/C we only allow the shift if BOTH indices are inside the SAME ancestor chain
+	 * on all higher levels (1...lvl-1). This prevents a deeper-level section from expanding across a parent boundary.
+	 *
+	 * Jumps' list order is NOT changed here.
+	 *
+	 * Returns true if at least one level boundary was shifted.
+	 */
+	private static boolean shiftBoundariesAllLevels(ParkourMap map, int idx, int delta, int maxLevels) {
+		if (map == null) return false;
+		if (delta != -1 && delta != 1) return false;
+
+		boolean changed = false;
+
+		for (int lvl = 1; lvl <= maxLevels; lvl++) {
+			ArrayList<MapSection> secs = map.getSectionsForLevel(lvl);
+			if (secs == null || secs.isEmpty()) continue;
+
+			if (delta == -1) {
+				// Move up: boundary between (idx-1) and idx
+				int leftIdx = idx - 1;
+				if (leftIdx < 0) continue;
+
+				MapSection left = findSectionContainingIndex(secs, leftIdx);
+				MapSection right = findSectionContainingIndex(secs, idx);
+
+				// ---- Case A: between two different sections ----
+				if (left != null && right != null && left != right) {
+					int rStart = normStart(right);
+					if (idx == rStart) {
+						left.setEndJumpIndex(normEnd(left) + 1);
+						right.setStartJumpIndex(rStart + 1);
+						changed = true;
+					}
+					continue;
+				}
+
+				// ---- Case B: left is a section, right is "no section" (no subsection) ----
+				// Example: parent S2 includes both, but only leftIdx is inside child R2; idx is outside any child.
+				if (left != null && right == null) {
+					// Only if idx is immediately AFTER left's end, and both indices share the same ancestors on higher levels.
+					int lEnd = normEnd(left);
+					if (idx == lEnd + 1 && sameAncestorsOnHigherLevels(map, leftIdx, idx, lvl, maxLevels)) {
+						left.setEndJumpIndex(lEnd + 1); // expand child to include idx
+						changed = true;
+					}
+					continue;
+				}
+
+				// ---- Case C: left is "no section", right is a section ----
+				// This would mean idx is inside a section, leftIdx is not; moving up can pull idx out by shifting right.start.
+				if (left == null && right != null) {
+					int rStart = normStart(right);
+					if (idx == rStart && sameAncestorsOnHigherLevels(map, leftIdx, idx, lvl, maxLevels)) {
+						right.setStartJumpIndex(rStart + 1); // shrink from the start (idx leaves the section)
+						changed = true;
+					}
+				}
+			} else {
+				// delta == +1
+				// Move down: boundary between idx and (idx+1)
+				int rightIdx = idx + 1;
+
+				MapSection left = findSectionContainingIndex(secs, idx);
+				MapSection right = findSectionContainingIndex(secs, rightIdx);
+
+				// ---- Case A: between two different sections ----
+				if (left != null && right != null && left != right) {
+					int lEnd = normEnd(left);
+					if (idx == lEnd) {
+						left.setEndJumpIndex(lEnd - 1);
+						right.setStartJumpIndex(normStart(right) - 1);
+						changed = true;
+					}
+					continue;
+				}
+
+				// ---- Case B: left is a section, right is "no section" (no subsection) ----
+				// Example: idx is last inside child R2, rightIdx is outside any child but still within same parent S2.
+				if (left != null && right == null) {
+					int lEnd = normEnd(left);
+					if (idx == lEnd && sameAncestorsOnHigherLevels(map, idx, rightIdx, lvl, maxLevels)) {
+						left.setEndJumpIndex(lEnd - 1); // shrink child, idx leaves the child
+						changed = true;
+					}
+					continue;
+				}
+
+				// ---- Case C: left is "no section", right is a section ----
+				// Moving down can pull idx into the right section by expanding right.start to the left.
+				if (left == null && right != null) {
+					int rStart = normStart(right);
+					if (rightIdx == rStart && sameAncestorsOnHigherLevels(map, idx, rightIdx, lvl, maxLevels)) {
+						right.setStartJumpIndex(rStart - 1); // expand section to include idx
+						changed = true;
+					}
+				}
+			}
+		}
+
+		return changed;
+	}
+
+	private static int normStart(MapSection s) {
+		int a = s.getStartJumpIndex();
+		int b = s.getEndJumpIndex();
+		return (a <= b) ? a : b;
+	}
+
+	private static int normEnd(MapSection s) {
+		int a = s.getStartJumpIndex();
+		int b = s.getEndJumpIndex();
+		return (a <= b) ? b : a;
+	}
+
+	/**
+	 * Finds the first section whose (normalized) range contains index.
+	 * Empty sections (start > end) never match and are simply ignored (kept in list).
+	 */
+	private static MapSection findSectionContainingIndex(ArrayList<MapSection> secs, int index) {
+		if (secs == null || index < 0) return null;
+
+		for (int i = 0; i < secs.size(); i++) {
+			MapSection s = secs.get(i);
+			if (s == null) continue;
+
+			int a = s.getStartJumpIndex();
+			int b = s.getEndJumpIndex();
+			if (a > b) {
+				// empty section, keep it but it cannot contain anything
+				continue;
+			}
+
+			if (index >= a && index <= b) {
+				return s;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Returns true if indexA and indexB belong to the SAME section chain on all higher levels (1...lvl-1).
+	 * If on a higher level there are no sections, we treat it as "same".
+	 *
+	 * This is the key rule that allows cross-nesting behavior safely:
+	 * - A child section may expand into "no subsection" area only if both indices are inside the same parent(s).
+	 */
+	private static boolean sameAncestorsOnHigherLevels(ParkourMap map, int indexA, int indexB, int currentLevelOneBased, int maxLevels) {
+		if (map == null) return false;
+		if (currentLevelOneBased <= 1) return true; // no higher levels
+
+		int top = Math.min(maxLevels, currentLevelOneBased - 1);
+		for (int lvl = 1; lvl <= top; lvl++) {
+			ArrayList<MapSection> secs = map.getSectionsForLevel(lvl);
+			if (secs == null || secs.isEmpty()) {
+				// no constraints at this level
+				continue;
+			}
+
+			MapSection a = findSectionContainingIndex(secs, indexA);
+			MapSection b = findSectionContainingIndex(secs, indexB);
+
+			if (a != b) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	public static void renameJump(ParkourMap map, Jump jump, String newName) {
+		ensureStoresInitialized();
+		if (map == null || jump == null) return;
+
+		String t = (newName != null) ? newName.trim() : "";
+		if (t.isEmpty()) return;
+
+		jump.setId(t);
+
+		saveToFile();
 	}
 
 	public static boolean removeJump(ParkourMap map, Jump jump) {
 		ensureStoresInitialized();
 		if (map == null || jump == null) return false;
 
-		boolean removed = map.getJumps().remove(jump);
-		if (removed) {
-			if (selectedJump == jump) {
-				selectedJump = null;
-			}
-			saveToFile();
+		ArrayList<Jump> jumps = map.getJumps();
+		if (jumps == null || jumps.isEmpty()) return false;
+
+		int idx = indexOfJumpByReference(jumps, jump);
+		if (idx < 0) return false;
+
+		jumps.remove(idx);
+
+		int max = map.getMaxSectionLevelsAllowed();
+		if (max > 4) max = 4;
+
+		if (max > 0) {
+			shiftAllSectionRangesAfterRemove(map, idx, max);
 		}
-		return removed;
+
+		if (selectedJump == jump) {
+			selectedJump = null;
+		}
+
+		saveToFile();
+		return true;
 	}
 
-	public static boolean transferJump(ParkourMap fromMap, Jump jump, ServerProfile toServer, ParkourMap toMap) {
+	public static boolean transferJump(
+			ParkourMap fromMap,
+			Jump jump,
+			ServerProfile toServer,
+			ParkourMap toMap,
+			int targetLevelOneBased,
+			MapSection targetSection
+	) {
 		ensureStoresInitialized();
 
 		if (fromMap == null || toMap == null || jump == null) return false;
 		if (toMap == fromMap) return false;
 
+		// NOTE: Global IS allowed as a transfer target.
+		// (Do not block it here.)
+
 		if (fromMap.getJumps() == null) fromMap.setJumps(new ArrayList<Jump>());
 		if (toMap.getJumps() == null) toMap.setJumps(new ArrayList<Jump>());
 
-		// Remove from source
-		boolean removed = fromMap.getJumps().remove(jump);
+		// ------------------------------------------------------------
+		// 1) Remove from source (like removeJump) + shift section ranges
+		// ------------------------------------------------------------
+		ArrayList<Jump> fromJumps = fromMap.getJumps();
+		int removedIndex = indexOfJumpByReference(fromJumps, jump);
+		boolean removed = false;
 
-		// Fallback: remove by coords+id if reference does not match
-		if (!removed) {
-			for (int i = 0; i < fromMap.getJumps().size(); i++) {
-				Jump j = fromMap.getJumps().get(i);
+		if (removedIndex >= 0) {
+			fromJumps.remove(removedIndex);
+			removed = true;
+		} else {
+			// Fallback: remove by coords+id if reference does not match
+			for (int i = 0; i < fromJumps.size(); i++) {
+				Jump j = fromJumps.get(i);
 				if (j == null) continue;
 
 				boolean sameId = safeEq(j.getId(), jump.getId());
 				boolean sameCoords = (j.getX() == jump.getX() && j.getY() == jump.getY() && j.getZ() == jump.getZ());
 
 				if (sameId && sameCoords) {
-					fromMap.getJumps().remove(i);
+					fromJumps.remove(i);
+					removedIndex = i;
 					removed = true;
 					break;
 				}
@@ -2726,8 +3982,40 @@ public class ReminderManager {
 
 		if (!removed) return false;
 
-		// Add to target
-		toMap.getJumps().add(jump);
+		// Apply section shift on source map (exactly like removeJump does)
+		int fromMax = 0;
+		try { fromMax = fromMap.getMaxSectionLevelsAllowed(); } catch (Throwable ignored) {}
+		if (fromMax > 4) fromMax = 4;
+
+		if (fromMax > 0 && removedIndex >= 0) {
+			shiftAllSectionRangesAfterRemove(fromMap, removedIndex, fromMax);
+		}
+
+		// If selection pointed to this jump, clear it.
+		if (selectedJump == jump) {
+			selectedJump = null;
+		}
+
+		// ------------------------------------------------------------
+		// 2) Add to target
+		//    If section selected -> behave like InsertJump at end of section
+		// ------------------------------------------------------------
+		boolean insertedViaSection = false;
+
+		if (targetSection != null && targetLevelOneBased > 0) {
+			int toMax = 0;
+			try { toMax = toMap.getMaxSectionLevelsAllowed(); } catch (Throwable ignored) {}
+			if (toMax > 4) toMax = 4;
+
+			if (toMax > 0 && targetLevelOneBased >= 1 && targetLevelOneBased <= toMax) {
+				insertJumpAtEndOfSection(toMap, targetLevelOneBased, targetSection, jump);
+				insertedViaSection = true;
+			}
+		}
+
+		if (!insertedViaSection) {
+			toMap.getJumps().add(jump);
+		}
 
 		// Update selection to moved item
 		ServerProfile owner = findOwningServerForMap(toMap);
@@ -2763,22 +4051,6 @@ public class ReminderManager {
 					return s;
 				}
 			}
-		}
-		return null;
-	}
-
-	/**
-	 * Legacy: returns the first jump with a given name.
-	 * With duplicates allowed, this is NOT safe for selection logic.
-	 * Prefer findJumpByNameAndCoords(...) or selecting by object reference.
-	 */
-	public static Jump findJumpById(ParkourMap map, String id) {
-		ensureStoresInitialized();
-		if (map == null || id == null) return null;
-		if (map.getJumps() == null) map.setJumps(new ArrayList<Jump>());
-
-		for (Jump j : map.getJumps()) {
-			if (j != null && id.equals(j.getId())) return j;
 		}
 		return null;
 	}
@@ -2846,6 +4118,20 @@ public class ReminderManager {
 		}
 
 		return changed;
+	}
+
+	// ------------------------------------------------------------
+// Reference-based jump lookup (avoids equals()/hashCode() traps)
+// ------------------------------------------------------------
+
+	private static int indexOfJumpByReference(java.util.List<Jump> list, Jump target) {
+		if (list == null || target == null) return -1;
+		for (int i = 0; i < list.size(); i++) {
+			if (list.get(i) == target) {
+				return i;
+			}
+		}
+		return -1;
 	}
 
 	private static JumpPickResult findBestJumpInCrosshairInStore(
@@ -3035,16 +4321,6 @@ public class ReminderManager {
 		}
 	}
 
-	private static class JumpIndexContext {
-		final java.util.Map<String, java.util.List<Jump>> jumpsByNormName;
-		final java.util.Map<Jump, Integer> templateIndexByJump;
-
-		JumpIndexContext(java.util.Map<String, java.util.List<Jump>> jumpsByNormName,
-						 java.util.Map<Jump, Integer> templateIndexByJump) {
-			this.jumpsByNormName = jumpsByNormName;
-			this.templateIndexByJump = templateIndexByJump;
-		}
-	}
 
 	private static JumpPickResult findNearestJumpInStore(DataStore store, EntityPlayerSP player) {
 		if (store == null || store.getServers() == null || player == null) {
@@ -3525,6 +4801,29 @@ public class ReminderManager {
 		String trimmed = id.trim();
 		if (trimmed.isEmpty()) return false;
 		return trimmed.length() <= 48;
+	}
+
+	private static void postSectionSyncErrorToChat_() {
+		try {
+			final String err = getLastSectionSyncError();
+			if (err == null || err.trim().isEmpty()) {
+				return;
+			}
+
+			Minecraft mc = Minecraft.getMinecraft();
+			if (mc == null) return;
+
+			mc.addScheduledTask(new Runnable() {
+				@Override
+				public void run() {
+					sendChat(Minecraft.getMinecraft(),
+							EnumChatFormatting.DARK_AQUA + "[ParkourStrats] " +
+									EnumChatFormatting.RED + "Sync Sections failed: " +
+									EnumChatFormatting.GRAY + err);
+				}
+			});
+		} catch (Throwable ignored) {
+		}
 	}
 
 	private static void sendChat(Minecraft mc, String msg) {

@@ -121,7 +121,7 @@ public class GuiMapList extends GuiScreen {
         // Also, protected servers (Global / RestoredStrats) do not show management buttons.
         if (!isPickerMode && !isProtected) {
             createButton = new GuiButton(BTN_CREATE, this.width / 2 - 154, this.height - 44, 100, 20, "Create");
-            editButton = new GuiButton(BTN_EDIT, this.width / 2 - 50, this.height - 44, 100, 20, "Edit");
+            editButton = new GuiButton(BTN_EDIT, this.width / 2 - 50, this.height - 44, 100, 20, "Edit map");
             removeButton = new GuiButton(BTN_REMOVE, this.width / 2 + 54, this.height - 44, 100, 20, "Remove");
 
             this.buttonList.add(createButton);
@@ -297,21 +297,7 @@ public class GuiMapList extends GuiScreen {
         }
 
         if (button.id == BTN_CREATE) {
-            Minecraft.getMinecraft().displayGuiScreen(new GuiTextPrompt(
-                    this,
-                    "Create map",
-                    "",
-                    new GuiTextPrompt.IResultHandler() {
-                        @Override
-                        public void onConfirm(String text) {
-                            ReminderManager.createMap(server, text);
-                            initGui();
-                        }
-
-                        @Override
-                        public void onCancel() { }
-                    }
-            ));
+            Minecraft.getMinecraft().displayGuiScreen(new GuiCreateMap(this, server));
             return;
         }
 
@@ -320,21 +306,8 @@ public class GuiMapList extends GuiScreen {
         }
 
         if (button.id == BTN_EDIT) {
-            Minecraft.getMinecraft().displayGuiScreen(new GuiTextPrompt(
-                    this,
-                    "Rename map",
-                    selected.getId(),
-                    new GuiTextPrompt.IResultHandler() {
-                        @Override
-                        public void onConfirm(String text) {
-                            ReminderManager.renameMap(server, selected, text);
-                            initGui();
-                        }
-
-                        @Override
-                        public void onCancel() { }
-                    }
-            ));
+            if (selected == null) return;
+            Minecraft.getMinecraft().displayGuiScreen(new GuiEditMap(this, server, selected));
             return;
         }
 
