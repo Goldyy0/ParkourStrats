@@ -14,9 +14,11 @@ N - open hierarchy UI
 ### Main features:
 
 - Hierarchical containers to better organize your strategies (Servers: Maps:)
+- Add and configure map sections / sub-sections to create 1:1 spreadsheet copy
 - Improved Edit menu catered more towards Parkour
 - Make multiple strategies for the same jump
 - Synchronize Google Spreadsheets with in-game templates
+- Synchronize Google Spradsheets with in-game map sections
 - Recover old strategies from Texyle's mod and convert it to new format
 - Import and Export (map) templates
 
