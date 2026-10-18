@@ -259,6 +259,33 @@ public final class SectionLayoutService {
 	}
 
 	public static boolean moveJumpByOneRespectingSections(ParkourMap map, Jump jump, int delta) {
+		return moveByOne(map, jump, delta, true);
+	}
+
+	/**
+	 * Moves a jump to the given index, exactly as if "move by one" was applied that many times
+	 * (so section boundaries are respected the same way). Saves once.
+	 */
+	public static boolean moveJumpToIndex(ParkourMap map, Jump jump, int targetIndex) {
+		DataStoreRepository.ensureLoaded();
+		if (map == null || jump == null || map.getJumps() == null) return false;
+
+		int from = JumpService.indexOfJumpByReference(map.getJumps(), jump);
+		if (from < 0) return false;
+
+		int steps = Math.abs(targetIndex - from);
+		int delta = targetIndex > from ? 1 : -1;
+		boolean movedAny = false;
+		for (int i = 0; i < steps; i++) {
+			if (!moveByOne(map, jump, delta, false)) break;
+			movedAny = true;
+		}
+
+		if (movedAny) DataStoreRepository.save();
+		return movedAny;
+	}
+
+	private static boolean moveByOne(ParkourMap map, Jump jump, int delta, boolean save) {
 		DataStoreRepository.ensureLoaded();
 		if (map == null || jump == null) return false;
 		if (delta != -1 && delta != 1) return false;
@@ -280,7 +307,7 @@ public final class SectionLayoutService {
 		if (maxLevels < 1) {
 			// No sections configured -> plain swap by one.
 			java.util.Collections.swap(jumps, idx, otherIdx);
-			DataStoreRepository.save();
+			if (save) DataStoreRepository.save();
 			return true;
 		}
 		if (maxLevels > 4) maxLevels = 4;
@@ -301,7 +328,7 @@ public final class SectionLayoutService {
 		// IMPORTANT: keep empty sections (do NOT remove them automatically).
 		// No cleanupEmptySections(map) here.
 
-		DataStoreRepository.save();
+		if (save) DataStoreRepository.save();
 		return true;
 	}
 

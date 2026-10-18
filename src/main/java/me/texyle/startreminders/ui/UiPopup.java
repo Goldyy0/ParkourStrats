@@ -134,18 +134,18 @@ public final class UiPopup {
                 cy += SEPARATOR_H;
             }
 
-            boolean hover = e.enabled && !overScrollbar(mouseX, mouseY) && UiDraw.inside(mouseX, mouseY, x + 2, cy, w - 4, ROW_H);
+            boolean hover = e.enabled && !overScrollbar(mouseX, mouseY) && UiDraw.inside(mouseX, mouseY, x + 2, cy, rowW(), ROW_H);
             if (e.danger && e.enabled) {
-                UiDraw.fill(x + 2, cy, w - 4, ROW_H, hover ? UiTheme.DANGER_HOVER : UiTheme.DANGER);
+                UiDraw.fill(x + 2, cy, rowW(), ROW_H, hover ? UiTheme.DANGER_HOVER : UiTheme.DANGER);
             } else if (hover) {
-                UiDraw.fill(x + 2, cy, w - 4, ROW_H, UiTheme.ACCENT);
+                UiDraw.fill(x + 2, cy, rowW(), ROW_H, UiTheme.ACCENT);
             }
 
             int color = !e.enabled ? UiTheme.TEXT_DISABLED : UiTheme.TEXT;
             if (e.checked) {
                 UiDraw.text(">", x + 7, cy + 5, hover ? UiTheme.TEXT : UiTheme.ACCENT_HOVER);
             }
-            UiDraw.text(UiDraw.fit(e.label, w - 28), x + 18, cy + 5, color);
+            UiDraw.text(UiDraw.fit(e.label, rowW() - 24), x + 18, cy + 5, color);
             cy += ROW_H;
         }
 
@@ -155,6 +155,11 @@ public final class UiPopup {
             float dragged = scrollbar.updateDrag(mouseX, mouseY, scroll * ROW_H);
             scroll = Math.max(0, Math.min(Math.round(dragged / ROW_H), entries.size() - MAX_VISIBLE_ROWS));
         }
+    }
+
+    /** Width of a row; with a scrollbar the rows end before it. */
+    private int rowW() {
+        return w - 4 - (entries != null && entries.size() > MAX_VISIBLE_ROWS ? VerticalScrollbar.WIDTH + 4 : 0);
     }
 
     private boolean overScrollbar(int mouseX, int mouseY) {
@@ -175,7 +180,7 @@ public final class UiPopup {
                 Entry e = entries.get(i);
                 if (e.separatorBefore && i > scroll) cy += SEPARATOR_H;
 
-                if (UiDraw.inside(mouseX, mouseY, x + 2, cy, w - 4, ROW_H)) {
+                if (UiDraw.inside(mouseX, mouseY, x + 2, cy, rowW(), ROW_H)) {
                     if (e.enabled) {
                         Runnable action = e.action;
                         close();

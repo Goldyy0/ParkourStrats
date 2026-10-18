@@ -66,6 +66,8 @@ final class HubStrategiesTab implements HubTab {
         moreButton = new UiButton("More", UiButton.Style.GHOST, this::openJumpMenu);
 
         table.setOnActivate(jump -> editOrConvertSelected());
+        table.setOnMove(this::dropJump);
+        table.setPopup(popup);
         searchField.onChange(table::setFilter);
 
         widgets.add(serverDropdown);
@@ -163,6 +165,7 @@ final class HubStrategiesTab implements HubTab {
     @Override
     public void onShow() {
         table.clearZoom();
+        table.setMoveMode(false);
         syncFromSelection();
         rebuildTable();
     }
@@ -203,6 +206,7 @@ final class HubStrategiesTab implements HubTab {
     /** Points the table at the current map, keeping its scroll position and the selected jump. */
     private void rebuildTable() {
         table.setMap(map);
+        if (isRestoredMap()) table.setMoveMode(false);
 
         Jump selected = SelectionState.getSelectedJump();
         if (selected != null && table.isShowing(selected)) {
@@ -291,8 +295,8 @@ final class HubStrategiesTab implements HubTab {
         List<Entry> entries = new ArrayList<Entry>();
         entries.add(Entry.item("Edit strategy...", this::editSelected));
         entries.add(Entry.item("Rename...", !restored, () -> renameJump(jump)));
-        entries.add(Entry.item("Move up", !restored && index > 0, () -> moveJump(jump, -1)));
-        entries.add(Entry.item("Move down", !restored && index >= 0 && index < size - 1, () -> moveJump(jump, 1)));
+        entries.add(new Entry("Move jumps", !restored && size > 1, table.isMoveMode(), false,
+                () -> table.setMoveMode(!table.isMoveMode())));
         if (restored) {
             entries.add(Entry.item("Convert to Global...", () -> convertToGlobal(jump)));
         } else {
@@ -325,10 +329,17 @@ final class HubStrategiesTab implements HubTab {
                 }));
     }
 
-    private void moveJump(Jump jump, int delta) {
-        if (SectionLayoutService.moveJumpByOneRespectingSections(map, jump, delta)) {
+    /** A jump was dragged next to another one in move mode. */
+    private void dropJump(Jump moved, Jump anchor, boolean after) {
+        List<Jump> list = map.getJumps();
+        int from = indexOf(list, moved);
+        int to = indexOf(list, anchor);
+        if (from < 0 || to < 0) return;
+
+        int target = after ? (from < to ? to : to + 1) : (from < to ? to - 1 : to);
+        if (SectionLayoutService.moveJumpToIndex(map, moved, target)) {
             rebuildTable();
-            table.selectJump(jump);
+            table.selectJump(moved);
             table.ensureSelectedVisible();
         }
     }

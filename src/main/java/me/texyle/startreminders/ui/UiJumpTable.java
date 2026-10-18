@@ -11,6 +11,7 @@ import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.renderer.GlStateManager;
 import org.lwjgl.input.Keyboard;
+import org.lwjgl.input.Mouse;
 
 import me.texyle.startreminders.data.Jump;
 import me.texyle.startreminders.data.MapSection;
@@ -52,7 +53,7 @@ public class UiJumpTable extends UiWidget {
 
     private static final int NUM_W = 30;
     private static final int SECTION_W = 80;
-    private static final int COMPACT_SECTION_W = 10;
+    private static final int COMPACT_SECTION_W = 16;
     private static final int JUMP_W = 124;
     private static final int COUNT_LABEL_W = 38; // "2/3" plus the marker in front of it
 
@@ -104,6 +105,18 @@ public class UiJumpTable extends UiWidget {
     private String emptyText = "";
     private Consumer<Jump> onActivate;
 
+    /** Called when a dragged jump is dropped: put {@code moved} before (or after) {@code anchor}. */
+    public interface MoveHandler {
+        void onMove(Jump moved, Jump anchor, boolean after);
+    }
+
+    private MoveHandler onMove;
+    private boolean moveMode;
+    private Jump dragJump;          // pressed jump in move mode (a drag once the mouse moved enough)
+    private boolean dragging;
+    private int dragStartY;
+    private int dropSlot = -1;      // 0..visible jumps: the gap the jump would be dropped into
+
     private Jump selectedJump;
     private float scroll = 0f;
 
@@ -139,6 +152,9 @@ public class UiJumpTable extends UiWidget {
     private long zoomLabelUntil = 0L;
 
     private int hoverRow = -1;
+    private int lastMouseX = -9999;
+    private int lastMouseY = -9999;
+    private UiPopup popup; // for the section menus in the header
     private int lastClickedGroup = -1;
     private long lastClickMs = 0L;
 
@@ -169,6 +185,26 @@ public class UiJumpTable extends UiWidget {
 
     public void setEmptyText(String text) {
         this.emptyText = text != null ? text : "";
+    }
+
+    /** The window's popup, used for the section menus ("fast travel") in the header. */
+    public void setPopup(UiPopup popup) {
+        this.popup = popup;
+    }
+
+    public void setOnMove(MoveHandler handler) {
+        this.onMove = handler;
+    }
+
+    public boolean isMoveMode() {
+        return moveMode;
+    }
+
+    public void setMoveMode(boolean on) {
+        moveMode = on;
+        dragJump = null;
+        dragging = false;
+        dropSlot = -1;
     }
 
     public void setOnActivate(Consumer<Jump> handler) {
@@ -579,6 +615,8 @@ public class UiJumpTable extends UiWidget {
 
         UiDraw.box(x, y, frameW(), frameH(), UiTheme.CARD_BG, UiTheme.CARD_BORDER);
 
+        lastMouseX = mouseX;
+        lastMouseY = mouseY;
         hoverRow = overScrollbars(mouseX, mouseY) ? -1 : rowAt(mouseX, mouseY);
 
         drawHeader();
@@ -591,9 +629,11 @@ public class UiJumpTable extends UiWidget {
             drawBody();
         }
 
+        updateDrag(mouseX, mouseY);
         drawScrollbars(mouseX, mouseY);
+        drawDragOverlay(mouseX, mouseY);
         drawZoomLabel();
-        drawTooltip(mouseX, mouseY);
+        if (!dragging) drawTooltip(mouseX, mouseY);
     }
 
     private void drawHeader() {
@@ -623,8 +663,6 @@ public class UiJumpTable extends UiWidget {
     }
 
     private void drawHeaderCell(Col c, int top) {
-        if (c.kind == Kind.SECTION && compactSections) return; // too narrow for a title; see the tooltip
-
         String title;
         switch (c.kind) {
             case NUMBER:
@@ -642,7 +680,23 @@ public class UiJumpTable extends UiWidget {
 
         int cx = colScreenX(c);
         int cw = sw(c.width);
-        UiDraw.text(UiDraw.fit(title.toUpperCase(), cw - PAD_X * 2), cx + PAD_X, top + (HEADER_H - 8) / 2, UiTheme.TEXT_MUTED);
+
+        if (c.kind == Kind.SECTION) {
+            // A small arrow opens the list of this level's sections; compact stripes have no room for a title.
+            boolean hover = popup != null && UiDraw.inside(lastMouseX, lastMouseY, cx, top, cw, HEADER_H - 1);
+            int arrowColor = hover ? UiTheme.TEXT : UiTheme.TEXT_MUTED;
+            if (hover) UiDraw.fill(cx, top, cw - 1, HEADER_H - 1, UiTheme.CARD_BORDER);
+            int ax = compactSections ? cx + (cw - 1 - 5) / 2 : cx + cw - 9;
+            int ay = top + (HEADER_H - 3) / 2;
+            UiDraw.fill(ax, ay, 5, 1, arrowColor);
+            UiDraw.fill(ax + 1, ay + 1, 3, 1, arrowColor);
+            UiDraw.fill(ax + 2, ay + 2, 1, 1, arrowColor);
+            if (!compactSections) {
+                UiDraw.text(UiDraw.fit(title.toUpperCase(), cw - PAD_X - 12), cx + PAD_X, top + (HEADER_H - 8) / 2, UiTheme.TEXT_MUTED);
+            }
+        } else {
+            UiDraw.text(UiDraw.fit(title.toUpperCase(), cw - PAD_X * 2), cx + PAD_X, top + (HEADER_H - 8) / 2, UiTheme.TEXT_MUTED);
+        }
         UiDraw.fill(cx + cw - 1, top + 4, 1, HEADER_H - 9, COLOR_COLUMN_LINE);
     }
 
@@ -874,6 +928,171 @@ public class UiJumpTable extends UiWidget {
         }
     }
 
+    // -------------------------
+    // Section menus ("fast travel")
+    // -------------------------
+
+    /** A click on a section column's header opens the list of that level's sections. */
+    private boolean openSectionMenu(int mouseX, int mouseY) {
+        if (popup == null || map == null) return false;
+        int headerTop = y + 1;
+        if (mouseY < headerTop || mouseY >= headerTop + HEADER_H) return false;
+
+        for (Col c : cols) {
+            if (c.kind != Kind.SECTION) continue;
+            int cx = colScreenX(c);
+            int cw = sw(c.width);
+            boolean inFrozenPart = mouseX < bodyLeft() + sw(frozenW);
+            if (mouseX < cx || mouseX >= cx + cw || (!c.frozen && inFrozenPart)) continue;
+
+            List<UiPopup.Entry> entries = sectionEntries(c.index);
+            if (!entries.isEmpty()) popup.open(cx, headerTop + HEADER_H, 160, entries);
+            return true;
+        }
+        return false;
+    }
+
+    private List<UiPopup.Entry> sectionEntries(int level) {
+        List<UiPopup.Entry> entries = new ArrayList<UiPopup.Entry>();
+        ArrayList<MapSection> sections = map.getSectionsForLevel(level + 1);
+        if (sections == null) return entries;
+
+        List<MapSection> sorted = new ArrayList<MapSection>();
+        for (MapSection s : sections) {
+            if (s != null && s.getStartJumpIndex() >= 0 && s.getEndJumpIndex() >= s.getStartJumpIndex()) sorted.add(s);
+        }
+        sorted.sort((a, b) -> Integer.compare(a.getStartJumpIndex(), b.getStartJumpIndex()));
+
+        int selectedIndex = -1;
+        for (Row r : rows) {
+            if (r.jump == selectedJump) selectedIndex = r.jumpIndex;
+        }
+
+        for (MapSection s : sorted) {
+            final MapSection target = s;
+            String name = (s.getName() != null && !s.getName().trim().isEmpty()) ? s.getName().trim() : "(unnamed)";
+            boolean current = selectedIndex >= s.getStartJumpIndex() && selectedIndex <= s.getEndJumpIndex();
+            boolean reachable = firstRowOfSection(s) != null;
+            entries.add(new UiPopup.Entry(name, reachable, current, false, () -> travelTo(target)));
+        }
+        return entries;
+    }
+
+    /** First shown row inside the section (a search filter may hide its first jump). */
+    private Row firstRowOfSection(MapSection s) {
+        for (Row r : rows) {
+            if (r.firstOfGroup() && r.jumpIndex >= s.getStartJumpIndex() && r.jumpIndex <= s.getEndJumpIndex()) return r;
+        }
+        return null;
+    }
+
+    private void travelTo(MapSection s) {
+        ensureLayout();
+        Row r = firstRowOfSection(s);
+        if (r == null) return;
+
+        selectedJump = r.jump;
+        scroll = r.top;
+        clampScroll();
+    }
+
+    // -------------------------
+    // Move mode (drag and drop)
+    // -------------------------
+
+    /** First row of every shown jump, top to bottom. */
+    private List<Row> groupHeads() {
+        List<Row> heads = new ArrayList<Row>();
+        for (Row r : rows) {
+            if (r.firstOfGroup()) heads.add(r);
+        }
+        return heads;
+    }
+
+    private int slotAt(int mouseY, List<Row> heads) {
+        float contentY = scroll + (mouseY - bodyTop()) / zoom;
+        int slot = 0;
+        for (Row r : heads) {
+            if (r.top + r.groupHeight / 2f < contentY) slot++;
+        }
+        return slot;
+    }
+
+    /** Polled every frame (there is no release event): tracks the drag, scrolls at the edges, drops on release. */
+    private void updateDrag(int mouseX, int mouseY) {
+        if (dragJump == null) return;
+
+        if (!Mouse.isButtonDown(0)) {
+            finishDrag();
+            return;
+        }
+
+        if (!dragging && Math.abs(mouseY - dragStartY) >= 4) dragging = true;
+        if (!dragging) return;
+
+        // Near the top or bottom edge the table keeps scrolling by itself.
+        if (mouseY < bodyTop() + 14) {
+            scroll -= 6f / zoom;
+        } else if (mouseY > bodyTop() + bodyHs - 14) {
+            scroll += 6f / zoom;
+        }
+        clampScroll();
+
+        dropSlot = slotAt(mouseY, groupHeads());
+    }
+
+    private void finishDrag() {
+        Jump moved = dragJump;
+        boolean wasDragging = dragging;
+        int slot = dropSlot;
+        dragJump = null;
+        dragging = false;
+        dropSlot = -1;
+
+        if (!wasDragging || moved == null || onMove == null || slot < 0) return;
+
+        List<Row> heads = groupHeads();
+        int from = -1;
+        for (int i = 0; i < heads.size(); i++) {
+            if (heads.get(i).jump == moved) from = i;
+        }
+        if (from < 0 || slot == from || slot == from + 1) return; // dropped where it already is
+
+        if (slot < heads.size()) {
+            onMove.onMove(moved, heads.get(slot).jump, false);
+        } else {
+            onMove.onMove(moved, heads.get(heads.size() - 1).jump, true);
+        }
+    }
+
+    private void drawDragOverlay(int mouseX, int mouseY) {
+        if (!moveMode) return;
+
+        if (dragging && dropSlot >= 0) {
+            List<Row> heads = groupHeads();
+            if (!heads.isEmpty()) {
+                int contentY = dropSlot < heads.size()
+                        ? heads.get(dropSlot).top
+                        : heads.get(heads.size() - 1).top + heads.get(heads.size() - 1).groupHeight;
+                int lineY = bodyTop() + Math.round((contentY - scroll) * zoom);
+                if (lineY >= bodyTop() && lineY <= bodyTop() + bodyHs) {
+                    UiDraw.fill(bodyLeft(), lineY - 1, viewWs, 2, UiTheme.ACCENT_HOVER);
+                }
+            }
+
+            String name = jumpName(dragJump);
+            int gw = UiDraw.width(name) + 12;
+            UiDraw.box(mouseX + 10, mouseY - 7, gw, 14, UiTheme.PANEL_BG | 0xFF000000, UiTheme.ACCENT);
+            UiDraw.text(name, mouseX + 16, mouseY - 4, UiTheme.TEXT);
+        }
+
+        String hint = "MOVE MODE - drag jumps to reorder";
+        int hw = UiDraw.width(hint) + 12;
+        int hy = y + frameH() - 20;
+        UiDraw.box(bodyLeft() + 8, hy, hw, 14, UiTheme.PANEL_BG | 0xFF000000, UiTheme.ACCENT);
+        UiDraw.text(hint, bodyLeft() + 14, hy + 3, UiTheme.TEXT);
+    }
+
     /** Briefly shows the zoom level in the corner after it changed. */
     private void drawZoomLabel() {
         if (Minecraft.getSystemTime() >= zoomLabelUntil) return;
@@ -973,13 +1192,20 @@ public class UiJumpTable extends UiWidget {
 
         ensureLayout();
         if (overScrollbars(mouseX, mouseY)) return true; // dragging is handled while drawing
+        if (openSectionMenu(mouseX, mouseY)) return true;
 
         int index = rowAt(mouseX, mouseY);
         if (index < 0) return true;
 
         Row r = rows.get(index);
         long now = Minecraft.getSystemTime();
-        boolean isDouble = (r.groupIndex == lastClickedGroup) && (now - lastClickMs) <= DOUBLE_CLICK_MS;
+        boolean isDouble = !moveMode && (r.groupIndex == lastClickedGroup) && (now - lastClickMs) <= DOUBLE_CLICK_MS;
+
+        if (moveMode) {
+            dragJump = r.jump;
+            dragging = false;
+            dragStartY = mouseY;
+        }
 
         selectedJump = r.jump;
         lastClickedGroup = r.groupIndex;
@@ -994,7 +1220,9 @@ public class UiJumpTable extends UiWidget {
 
     @Override
     public boolean mouseWheel(int mouseX, int mouseY, int delta) {
-        if (!visible || !contains(mouseX, mouseY) || delta == 0) return false;
+        // While a jump is dragged the wheel scrolls wherever the mouse is.
+        boolean overTable = contains(mouseX, mouseY) || dragging;
+        if (!visible || !overTable || delta == 0) return false;
         ensureLayout();
 
         boolean ctrl = Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL);
