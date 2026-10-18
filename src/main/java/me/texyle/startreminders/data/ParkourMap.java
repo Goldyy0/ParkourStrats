@@ -21,24 +21,28 @@ public class ParkourMap {
     // -------------------------
     private boolean sectionsEnabled = false;
 
-    // 0 = none, otherwise 1..4
+    /** Deepest nesting of sections (levels I..V). */
+    public static final int MAX_SECTION_LEVELS = 5;
+
+    // 0 = none, otherwise 1..MAX_SECTION_LEVELS
     private int sectionsCount = 0;
 
-    // Always conceptual length 4 (I...IV). Old JSON may have null.
+    // Always conceptual length MAX_SECTION_LEVELS (I...V). Old JSON may have null or fewer entries.
     private String[] sectionNames;
 
     private static final String[] DEFAULT_SECTION_NAMES = new String[] {
-            "Section", "Sub-section", "Area", "CP"
+            "Section", "Sub-section", "Area", "CP", "Part"
     };
 
     // -------------------------
     // Section items (Phase 2)
-    // Stored per "level" (I..IV)
+    // Stored per "level" (I..V)
     // -------------------------
     private ArrayList<MapSection> sectionsL1;
     private ArrayList<MapSection> sectionsL2;
     private ArrayList<MapSection> sectionsL3;
     private ArrayList<MapSection> sectionsL4;
+    private ArrayList<MapSection> sectionsL5;
 
     public String getId() {
         return id;
@@ -135,7 +139,7 @@ public class ParkourMap {
 
     public void setSectionsCountRaw(int count) {
         if (count < 0) count = 0;
-        if (count > 4) count = 4;
+        if (count > MAX_SECTION_LEVELS) count = MAX_SECTION_LEVELS;
         this.sectionsCount = count;
         if (count == 0) {
             this.sectionsEnabled = false;
@@ -146,21 +150,21 @@ public class ParkourMap {
         if (!sectionsEnabled) return 0;
         int c = sectionsCount;
         if (c < 1) c = 1;
-        if (c > 4) c = 4;
+        if (c > MAX_SECTION_LEVELS) c = MAX_SECTION_LEVELS;
         return c;
     }
 
     public String[] getSectionNamesSafe() {
-        String[] out = new String[4];
+        String[] out = new String[MAX_SECTION_LEVELS];
 
         // Start with defaults
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < MAX_SECTION_LEVELS; i++) {
             out[i] = DEFAULT_SECTION_NAMES[i];
         }
 
         // Merge persisted values if present
         if (sectionNames != null) {
-            for (int i = 0; i < 4 && i < sectionNames.length; i++) {
+            for (int i = 0; i < MAX_SECTION_LEVELS && i < sectionNames.length; i++) {
                 String v = sectionNames[i];
                 if (v != null && v.trim().length() > 0) {
                     out[i] = v;
@@ -172,14 +176,14 @@ public class ParkourMap {
     }
 
     public String getSectionName(int idx) {
-        if (idx < 0 || idx > 3) return "";
+        if (idx < 0 || idx >= MAX_SECTION_LEVELS) return "";
         return getSectionNamesSafe()[idx];
     }
 
     public void setSectionName(int idx, String name) {
-        if (idx < 0 || idx > 3) return;
+        if (idx < 0 || idx >= MAX_SECTION_LEVELS) return;
 
-        if (this.sectionNames == null || this.sectionNames.length != 4) {
+        if (this.sectionNames == null || this.sectionNames.length != MAX_SECTION_LEVELS) {
             this.sectionNames = getSectionNamesSafe();
         }
 
@@ -192,8 +196,8 @@ public class ParkourMap {
             return;
         }
 
-        String[] out = new String[4];
-        for (int i = 0; i < 4; i++) {
+        String[] out = new String[MAX_SECTION_LEVELS];
+        for (int i = 0; i < MAX_SECTION_LEVELS; i++) {
             out[i] = (i < names.length && names[i] != null) ? names[i] : "";
         }
         this.sectionNames = out;
@@ -219,6 +223,10 @@ public class ParkourMap {
         if (levelOneBased == 4) {
             if (sectionsL4 == null) sectionsL4 = new ArrayList<MapSection>();
             return sectionsL4;
+        }
+        if (levelOneBased == 5) {
+            if (sectionsL5 == null) sectionsL5 = new ArrayList<MapSection>();
+            return sectionsL5;
         }
         return new ArrayList<MapSection>();
     }

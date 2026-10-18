@@ -42,8 +42,8 @@ public class GuiEditMap extends GuiMapForm {
         int count = (effective <= 0) ? 1 : effective;
 
         String[] stored = map.getSectionNamesSafe();
-        String[] names = new String[4];
-        for (int i = 0; i < 4; i++) {
+        String[] names = new String[ParkourMap.MAX_SECTION_LEVELS];
+        for (int i = 0; i < ParkourMap.MAX_SECTION_LEVELS; i++) {
             names[i] = (stored != null && i < stored.length && stored[i] != null) ? stored[i] : "";
         }
 

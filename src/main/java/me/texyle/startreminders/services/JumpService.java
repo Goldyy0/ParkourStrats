@@ -202,7 +202,7 @@ public final class JumpService {
 		jumps.remove(idx);
 
 		int max = map.getMaxSectionLevelsAllowed();
-		if (max > 4) max = 4;
+		if (max > ParkourMap.MAX_SECTION_LEVELS) max = ParkourMap.MAX_SECTION_LEVELS;
 
 		if (max > 0) {
 			SectionLayoutService.shiftAllSectionRangesAfterRemove(map, idx, max);
@@ -266,7 +266,7 @@ public final class JumpService {
 		// Apply section shift on source map (exactly like removeJump does)
 		int fromMax = 0;
 		try { fromMax = fromMap.getMaxSectionLevelsAllowed(); } catch (Throwable ignored) {}
-		if (fromMax > 4) fromMax = 4;
+		if (fromMax > ParkourMap.MAX_SECTION_LEVELS) fromMax = ParkourMap.MAX_SECTION_LEVELS;
 
 		if (fromMax > 0 && removedIndex >= 0) {
 			SectionLayoutService.shiftAllSectionRangesAfterRemove(fromMap, removedIndex, fromMax);
@@ -284,7 +284,7 @@ public final class JumpService {
 		if (targetSection != null && targetLevelOneBased > 0) {
 			int toMax = 0;
 			try { toMax = toMap.getMaxSectionLevelsAllowed(); } catch (Throwable ignored) {}
-			if (toMax > 4) toMax = 4;
+			if (toMax > ParkourMap.MAX_SECTION_LEVELS) toMax = ParkourMap.MAX_SECTION_LEVELS;
 
 			if (toMax > 0 && targetLevelOneBased >= 1 && targetLevelOneBased <= toMax) {
 				SectionLayoutService.insertJumpAtEndOfSection(toMap, targetLevelOneBased, targetSection, jump);

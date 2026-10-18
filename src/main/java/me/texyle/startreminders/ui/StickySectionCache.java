@@ -50,7 +50,7 @@ public final class StickySectionCache {
             return null;
         }
 
-        if (cachedSectionLevelOneBased < 1 || cachedSectionLevelOneBased > 4) {
+        if (cachedSectionLevelOneBased < 1 || cachedSectionLevelOneBased > ParkourMap.MAX_SECTION_LEVELS) {
             return null;
         }
 
@@ -75,7 +75,7 @@ public final class StickySectionCache {
         cachedServerId = sid;
         cachedMapId = mid;
 
-        if (section == null || levelOneBased < 1 || levelOneBased > 4) {
+        if (section == null || levelOneBased < 1 || levelOneBased > ParkourMap.MAX_SECTION_LEVELS) {
             cachedSectionLevelOneBased = 0;
             cachedSectionId = null;
             return;

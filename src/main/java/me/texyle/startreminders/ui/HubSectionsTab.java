@@ -20,7 +20,7 @@ import me.texyle.startreminders.utils.ChatUtils;
  */
 final class HubSectionsTab implements HubTab {
 
-    private static final String[] ROMAN = { "", "I", "II", "III", "IV" };
+    private static final String[] ROMAN = { "", "I", "II", "III", "IV", "V" };
     private static final int GAP = 8;
     private static final int FOOTER_H = 24;
 
@@ -79,7 +79,7 @@ final class HubSectionsTab implements HubTab {
 
     private int levels() {
         ParkourMap map = map();
-        return map != null ? Math.max(1, Math.min(4, map.getMaxSectionLevelsAllowed())) : 1;
+        return map != null ? Math.max(1, Math.min(ParkourMap.MAX_SECTION_LEVELS, map.getMaxSectionLevelsAllowed())) : 1;
     }
 
     private List<MapSection> currentSections() {

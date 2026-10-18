@@ -192,7 +192,7 @@ public final class SheetJumpResolver {
 		int max = 0;
 		try { max = map.getMaxSectionLevelsAllowed(); } catch (Throwable ignored) { }
 		if (max < 1) return "";
-		if (max > 4) max = 4;
+		if (max > ParkourMap.MAX_SECTION_LEVELS) max = ParkourMap.MAX_SECTION_LEVELS;
 
 		String[] pathVals = new String[max];
 		boolean hasAny = false;

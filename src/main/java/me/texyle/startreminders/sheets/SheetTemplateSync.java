@@ -116,7 +116,7 @@ public final class SheetTemplateSync {
 		int maxLevels = 0;
 		try { maxLevels = map.getMaxSectionLevelsAllowed(); } catch (Throwable ignored) {}
 		if (maxLevels < 0) maxLevels = 0;
-		if (maxLevels > 4) maxLevels = 4;
+		if (maxLevels > ParkourMap.MAX_SECTION_LEVELS) maxLevels = ParkourMap.MAX_SECTION_LEVELS;
 
 		int[] sectionCols = new int[maxLevels];
 		for (int i = 0; i < maxLevels; i++) sectionCols[i] = -1;

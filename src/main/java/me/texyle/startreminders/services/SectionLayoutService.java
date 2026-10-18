@@ -202,7 +202,7 @@ public final class SectionLayoutService {
 		if (map == null) return;
 
 		if (maxLevels < 1) return;
-		if (maxLevels > 4) maxLevels = 4;
+		if (maxLevels > ParkourMap.MAX_SECTION_LEVELS) maxLevels = ParkourMap.MAX_SECTION_LEVELS;
 
 		ArrayList<Jump> jumps = map.getJumps();
 		int jumpCount = (jumps != null) ? jumps.size() : 0;
@@ -310,7 +310,7 @@ public final class SectionLayoutService {
 			if (save) DataStoreRepository.save();
 			return true;
 		}
-		if (maxLevels > 4) maxLevels = 4;
+		if (maxLevels > ParkourMap.MAX_SECTION_LEVELS) maxLevels = ParkourMap.MAX_SECTION_LEVELS;
 
 		// Try to shift section boundaries on ALL levels where a boundary exists at this move position.
 		boolean shiftedAny = shiftBoundariesAllLevels(map, idx, delta, maxLevels);
@@ -335,7 +335,7 @@ public final class SectionLayoutService {
 	private static void deactivateEmptySectionsAfterBoundaryShift(ParkourMap map, int maxLevels) {
 		if (map == null) return;
 		if (maxLevels < 1) return;
-		if (maxLevels > 4) maxLevels = 4;
+		if (maxLevels > ParkourMap.MAX_SECTION_LEVELS) maxLevels = ParkourMap.MAX_SECTION_LEVELS;
 
 		for (int lvl = 1; lvl <= maxLevels; lvl++) {
 			ArrayList<MapSection> secs = map.getSectionsForLevel(lvl);

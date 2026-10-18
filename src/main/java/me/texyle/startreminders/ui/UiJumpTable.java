@@ -349,18 +349,9 @@ public class UiJumpTable extends UiWidget {
     private boolean matches(Jump jump) {
         if (filter.isEmpty()) return true;
 
+        // Only the jump's name; the strategy texts are not searched.
         String id = jump.getId();
-        if (id != null && id.toLowerCase().contains(filter)) return true;
-
-        List<Reminder> reminders = jump.getReminders();
-        if (reminders == null) return false;
-        for (Reminder r : reminders) {
-            if (r == null || r.lines == null) continue;
-            for (String line : r.lines) {
-                if (line != null && line.toLowerCase().contains(filter)) return true;
-            }
-        }
-        return false;
+        return id != null && id.toLowerCase().contains(filter);
     }
 
     private void rebuildRows() {
@@ -393,7 +384,7 @@ public class UiJumpTable extends UiWidget {
     private void computeLayout() {
         wrapCache.clear();
 
-        sectionCount = map != null ? Math.max(0, Math.min(4, map.getEffectiveSectionsCount())) : 0;
+        sectionCount = map != null ? Math.max(0, Math.min(ParkourMap.MAX_SECTION_LEVELS, map.getEffectiveSectionsCount())) : 0;
         compactSections = UserPreferences.isSectionsCompact();
 
         needV = false;
@@ -685,7 +676,7 @@ public class UiJumpTable extends UiWidget {
             // A small arrow opens the list of this level's sections; compact stripes have no room for a title.
             boolean hover = popup != null && UiDraw.inside(lastMouseX, lastMouseY, cx, top, cw, HEADER_H - 1);
             int arrowColor = hover ? UiTheme.TEXT : UiTheme.TEXT_MUTED;
-            if (hover) UiDraw.fill(cx, top, cw - 1, HEADER_H - 1, UiTheme.CARD_BORDER);
+            if (hover) UiDraw.fill(cx, top, cw, HEADER_H - 1, UiTheme.CARD_BORDER);
             int ax = compactSections ? cx + (cw - 1 - 5) / 2 : cx + cw - 9;
             int ay = top + (HEADER_H - 3) / 2;
             UiDraw.fill(ax, ay, 5, 1, arrowColor);
@@ -697,7 +688,9 @@ public class UiJumpTable extends UiWidget {
         } else {
             UiDraw.text(UiDraw.fit(title.toUpperCase(), cw - PAD_X * 2), cx + PAD_X, top + (HEADER_H - 8) / 2, UiTheme.TEXT_MUTED);
         }
-        UiDraw.fill(cx + cw - 1, top + 4, 1, HEADER_H - 9, COLOR_COLUMN_LINE);
+        if (!(c.kind == Kind.SECTION && compactSections)) {
+            UiDraw.fill(cx + cw - 1, top + 4, 1, HEADER_H - 9, COLOR_COLUMN_LINE);
+        }
     }
 
     private void drawBody() {
@@ -884,7 +877,8 @@ public class UiJumpTable extends UiWidget {
         for (int i = 0; i < shown; i++) {
             String line = lines.get(i);
             if (i == shown - 1 && lines.size() > shown) {
-                line = ellipsize(line, textW - PAD_X * 2);
+                // More text follows: always end in dots, even when this line itself fits.
+                line = font().trimStringToWidth(line, Math.max(0, textW - PAD_X * 2 - UiDraw.width("..."))) + "...";
             }
             UiDraw.text(line, cx + PAD_X, startY + i * lineH, UiTheme.TEXT);
         }

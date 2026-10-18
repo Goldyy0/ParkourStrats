@@ -8,7 +8,7 @@ import me.texyle.startreminders.services.MapService;
 /** Form for creating a new map in a server. */
 public class GuiCreateMap extends GuiMapForm {
 
-    private static final String[] DEFAULT_SECTION_NAMES = { "Section", "Sub-section", "Area", "CP" };
+    private static final String[] DEFAULT_SECTION_NAMES = { "Section", "Sub-section", "Area", "CP", "Part" };
 
     private final ServerProfile server;
 

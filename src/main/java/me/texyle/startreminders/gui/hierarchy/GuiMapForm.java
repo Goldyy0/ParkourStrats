@@ -4,6 +4,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.util.EnumChatFormatting;
 
+import me.texyle.startreminders.data.ParkourMap;
 import me.texyle.startreminders.ui.UiButton;
 import me.texyle.startreminders.ui.UiDraw;
 import me.texyle.startreminders.ui.UiScreen;
@@ -24,7 +25,7 @@ abstract class GuiMapForm extends UiScreen {
         final String mapName;
         final Boolean sectionsEnabled;
         final Integer sectionsCount;
-        final String[] sectionNames; // 4 entries
+        final String[] sectionNames; // one per level
 
         Prefill(String mapName, Boolean sectionsEnabled, Integer sectionsCount, String[] sectionNames) {
             this.mapName = mapName;
@@ -34,7 +35,7 @@ abstract class GuiMapForm extends UiScreen {
         }
     }
 
-    private static final String[] ROMAN = { "I", "II", "III", "IV" };
+    private static final String[] ROMAN = { "I", "II", "III", "IV", "V" };
     private static final int ROW_H = 30;
     private static final int LABEL_W = 110;
 
@@ -43,11 +44,11 @@ abstract class GuiMapForm extends UiScreen {
     private String mapName = "";
     private boolean sectionsEnabled = false;
     private int sectionsCount = 1;
-    private final String[] sectionNames = new String[4];
+    private final String[] sectionNames = new String[ParkourMap.MAX_SECTION_LEVELS];
 
     private UiTextField nameField;
     private UiSegmented countChoice;
-    private final UiTextField[] nameFields = new UiTextField[4];
+    private final UiTextField[] nameFields = new UiTextField[ParkourMap.MAX_SECTION_LEVELS];
 
     GuiMapForm(GuiScreen parent) {
         super(parent);
@@ -86,7 +87,7 @@ abstract class GuiMapForm extends UiScreen {
 
     @Override
     protected int getPanelHeight() {
-        return 340;
+        return 372;
     }
 
     private void initializeOnce() {
@@ -97,7 +98,7 @@ abstract class GuiMapForm extends UiScreen {
         mapName = prefill.mapName;
         if (prefill.sectionsEnabled != null) sectionsEnabled = prefill.sectionsEnabled.booleanValue();
         if (prefill.sectionsCount != null) sectionsCount = prefill.sectionsCount.intValue();
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < ParkourMap.MAX_SECTION_LEVELS; i++) {
             sectionNames[i] = prefill.sectionNames[i];
         }
     }
@@ -121,7 +122,7 @@ abstract class GuiMapForm extends UiScreen {
         add(countChoice, fieldX, rowY + 1, countChoice.preferredWidth(), 18);
         rowY += ROW_H;
 
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < ParkourMap.MAX_SECTION_LEVELS; i++) {
             final int index = i;
             nameFields[i] = add(new UiTextField(sectionNames[i], 512).onChange(t -> sectionNames[index] = t),
                     fieldX, rowY, fieldW, 20);
@@ -136,7 +137,7 @@ abstract class GuiMapForm extends UiScreen {
     @Override
     protected void drawContent(int mouseX, int mouseY, float partialTicks) {
         countChoice.visible = sectionsEnabled;
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < ParkourMap.MAX_SECTION_LEVELS; i++) {
             nameFields[i].visible = sectionsEnabled && i < sectionsCount;
         }
 
@@ -179,8 +180,8 @@ abstract class GuiMapForm extends UiScreen {
 
         if (sectionsEnabled) {
             countToSave = sectionsCount;
-            names = new String[4];
-            for (int i = 0; i < 4; i++) {
+            names = new String[ParkourMap.MAX_SECTION_LEVELS];
+            for (int i = 0; i < ParkourMap.MAX_SECTION_LEVELS; i++) {
                 String v = sectionNames[i];
                 names[i] = (v != null) ? v.trim() : "";
             }

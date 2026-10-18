@@ -27,8 +27,6 @@ final class HubLibraryTab implements HubTab {
     private static final int HEADER_H = 22;
     private static final int INFO_H = 22;
 
-    private static final int GLOBAL_COLOR = 0xFF55FF55;
-    private static final int RESTORED_COLOR = 0xFFFFFF55;
 
     private final GuiHub hub;
     private final UiPopup popup;
@@ -175,8 +173,16 @@ final class HubLibraryTab implements HubTab {
         serverMenuButton.enabled = server != null && !protectedServer;
 
         UiDraw.text("SERVERS", x, y + 7, UiTheme.TEXT_MUTED);
-        String mapsTitle = server != null ? "MAPS OF " + String.valueOf(server.getId()).toUpperCase() : "MAPS";
-        UiDraw.text(UiDraw.fit(mapsTitle, mapList.w - 150), mapList.x, y + 7, UiTheme.TEXT_MUTED);
+        if (server != null) {
+            // "MAPS OF" muted, the server's name in its own color when it is Global / RestoredStrats.
+            String prefix = "MAPS OF ";
+            String name = UiDraw.fit(String.valueOf(server.getId()).toUpperCase(), mapList.w - 150 - UiDraw.width(prefix));
+            int special = SpecialColors.of(server);
+            UiDraw.text(prefix, mapList.x, y + 7, UiTheme.TEXT_MUTED);
+            UiDraw.text(name, mapList.x + UiDraw.width(prefix), y + 7, special != 0 ? special : UiTheme.TEXT_MUTED);
+        } else {
+            UiDraw.text("MAPS", mapList.x, y + 7, UiTheme.TEXT_MUTED);
+        }
 
         for (UiWidget widget : widgets) {
             widget.draw(mouseX, mouseY);
@@ -221,11 +227,8 @@ final class HubLibraryTab implements HubTab {
     }
 
     private void drawServerRow(ServerProfile s, int rx, int ry, int rw, int rh, boolean selected) {
-        int color = UiTheme.TEXT;
-        if (!selected) {
-            if (BuiltinContainers.isGlobalServer(s)) color = GLOBAL_COLOR;
-            else if (BuiltinContainers.isRestoredServer(s)) color = RESTORED_COLOR;
-        }
+        int special = SpecialColors.of(s);
+        int color = special != 0 ? special : UiTheme.TEXT;
         UiDraw.text(UiDraw.fit(String.valueOf(s.getId()), rw - 14), rx + 8, ry + (rh - 8) / 2, color);
     }
 
@@ -234,7 +237,8 @@ final class HubLibraryTab implements HubTab {
         String tag = m.hasSheetConfigured() ? "SHEET" : "";
         int tagW = tag.isEmpty() ? 0 : UiDraw.width(tag) + 12;
 
-        UiDraw.text(UiDraw.fit(String.valueOf(m.getId()), rw - 14 - tagW), rx + 8, textY, UiTheme.TEXT);
+        int special = SpecialColors.of(m);
+        UiDraw.text(UiDraw.fit(String.valueOf(m.getId()), rw - 14 - tagW), rx + 8, textY, special != 0 ? special : UiTheme.TEXT);
         if (!tag.isEmpty()) {
             UiDraw.text(tag, rx + rw - tagW, textY, selected ? UiTheme.TEXT : UiTheme.TEXT_MUTED);
         }

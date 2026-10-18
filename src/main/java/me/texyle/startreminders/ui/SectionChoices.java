@@ -11,7 +11,7 @@ import me.texyle.startreminders.ui.UiPopup.Entry;
 /** Builds the popup entries for picking one optional section out of all levels of a map. */
 public final class SectionChoices {
 
-    private static final String[] ROMAN = { "", "I", "II", "III", "IV" };
+    private static final String[] ROMAN = { "", "I", "II", "III", "IV", "V" };
 
     private SectionChoices() {}
 
@@ -25,7 +25,7 @@ public final class SectionChoices {
 
         if (map == null) return entries;
 
-        int levels = Math.max(1, Math.min(4, map.getMaxSectionLevelsAllowed()));
+        int levels = Math.max(1, Math.min(ParkourMap.MAX_SECTION_LEVELS, map.getMaxSectionLevelsAllowed()));
         for (int level = 1; level <= levels; level++) {
             ArrayList<MapSection> sections = map.getSectionsForLevel(level);
             if (sections == null) continue;
@@ -45,6 +45,6 @@ public final class SectionChoices {
         String range = (s.getStartJumpIndex() < 0 || s.getEndJumpIndex() < 0)
                 ? "(Not set)"
                 : "(" + (s.getStartJumpIndex() + 1) + " - " + (s.getEndJumpIndex() + 1) + ")";
-        return ROMAN[Math.max(0, Math.min(4, level))] + "  " + name + " " + range;
+        return ROMAN[Math.max(0, Math.min(ParkourMap.MAX_SECTION_LEVELS, level))] + "  " + name + " " + range;
     }
 }

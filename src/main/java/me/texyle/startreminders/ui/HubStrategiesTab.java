@@ -57,8 +57,10 @@ final class HubStrategiesTab implements HubTab {
         this.hub = hub;
         this.popup = popup;
 
-        serverDropdown = new UiDropdown(popup, "Server", this::serverLabel, this::serverEntries);
-        mapDropdown = new UiDropdown(popup, "Map", this::mapLabel, this::mapEntries);
+        serverDropdown = new UiDropdown(popup, "Server", this::serverLabel, this::serverEntries)
+                .valueColor(() -> SpecialColors.of(server));
+        mapDropdown = new UiDropdown(popup, "Map", this::mapLabel, this::mapEntries)
+                .valueColor(() -> SpecialColors.of(map));
 
         newButton = new UiButton("+ New strategy", UiButton.Style.PRIMARY, this::onPrimaryAction);
 
@@ -145,7 +147,7 @@ final class HubStrategiesTab implements HubTab {
     private List<Entry> serverEntries() {
         List<Entry> entries = new ArrayList<Entry>();
         for (final ServerProfile s : ServerService.getServers()) {
-            entries.add(Entry.choice(String.valueOf(s.getId()), s == server, () -> chooseServer(s)));
+            entries.add(Entry.choice(String.valueOf(s.getId()), s == server, () -> chooseServer(s)).colored(SpecialColors.of(s)));
         }
         entries.add(Entry.afterSeparator("Manage servers...", true, () -> hub.showTab(GuiHub.TAB_LIBRARY)));
         return entries;
@@ -155,7 +157,7 @@ final class HubStrategiesTab implements HubTab {
         List<Entry> entries = new ArrayList<Entry>();
         if (server != null) {
             for (final ParkourMap m : MapService.getMaps(server)) {
-                entries.add(Entry.choice(String.valueOf(m.getId()), m == map, () -> chooseMap(m)));
+                entries.add(Entry.choice(String.valueOf(m.getId()), m == map, () -> chooseMap(m)).colored(SpecialColors.of(m)));
             }
             entries.add(Entry.afterSeparator("Manage maps...", true, () -> hub.showTab(GuiHub.TAB_LIBRARY)));
         }

@@ -45,10 +45,10 @@ public final class MapService {
 		if (!sectionsEnabled) {
 			m.setSectionsCountRaw(0);
 		} else {
-			// Force 1..4
+			// Force 1..MAX_SECTION_LEVELS
 			int c = sectionsCount;
 			if (c < 1) c = 1;
-			if (c > 4) c = 4;
+			if (c > ParkourMap.MAX_SECTION_LEVELS) c = ParkourMap.MAX_SECTION_LEVELS;
 			m.setSectionsCountRaw(c);
 		}
 		if (sectionNames != null) {
@@ -86,7 +86,7 @@ public final class MapService {
 		} else {
 			int c = sectionsCount;
 			if (c < 1) c = 1;
-			if (c > 4) c = 4;
+			if (c > ParkourMap.MAX_SECTION_LEVELS) c = ParkourMap.MAX_SECTION_LEVELS;
 			map.setSectionsCountRaw(c);
 
 			if (sectionNames != null) {

@@ -66,9 +66,11 @@ public class GuiTransferJump extends UiScreen {
         int fieldW = w - LABEL_W;
         int rowY = y + ROW_H;
 
-        add(new UiDropdown(popup, "", this::serverLabel, this::serverEntries), fieldX, rowY, fieldW, 20);
+        add(new UiDropdown(popup, "", this::serverLabel, this::serverEntries).valueColor(() -> SpecialColors.of(selectedServer)),
+                fieldX, rowY, fieldW, 20);
         rowY += ROW_H;
-        mapDropdown = add(new UiDropdown(popup, "", this::mapLabel, this::mapEntries), fieldX, rowY, fieldW, 20);
+        mapDropdown = add(new UiDropdown(popup, "", this::mapLabel, this::mapEntries).valueColor(() -> SpecialColors.of(getTargetMap())),
+                fieldX, rowY, fieldW, 20);
         rowY += ROW_H;
         sectionDropdown = add(new UiDropdown(popup, "", this::sectionLabel,
                 () -> SectionChoices.entries(selectedMap, selectedSection, this::pickSection)), fieldX, rowY, fieldW, 20);
@@ -147,7 +149,7 @@ public class GuiTransferJump extends UiScreen {
                 // Global / Restored force their own map; otherwise the map must be picked again
                 selectedMap = BuiltinContainers.getForcedMap(s);
                 errorText = "";
-            }));
+            }).colored(SpecialColors.of(s)));
         }
         return entries;
     }
@@ -161,7 +163,7 @@ public class GuiTransferJump extends UiScreen {
                 selectedMap = m;
                 clearSection();
                 errorText = "";
-            }));
+            }).colored(SpecialColors.of(m)));
         }
         return entries;
     }

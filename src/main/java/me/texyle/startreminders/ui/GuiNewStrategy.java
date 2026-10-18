@@ -391,7 +391,7 @@ public class GuiNewStrategy extends UiScreen {
     }
 
     private boolean hasValidSection() {
-        return selectedSection != null && selectedSectionLevel >= 1 && selectedSectionLevel <= 4 && isSectionPickAllowed();
+        return selectedSection != null && selectedSectionLevel >= 1 && selectedSectionLevel <= ParkourMap.MAX_SECTION_LEVELS && isSectionPickAllowed();
     }
 
     /** Creates the jump with a PLACEHOLDER strategy (to be filled in later) and advances the sheet pager. */

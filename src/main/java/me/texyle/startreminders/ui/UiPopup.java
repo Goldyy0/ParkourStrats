@@ -19,6 +19,7 @@ public final class UiPopup {
         final Runnable action;
         final boolean separatorBefore;
         final boolean danger;
+        int color; // 0 = default text color
 
         public Entry(String label, boolean enabled, boolean checked, boolean separatorBefore, Runnable action) {
             this(label, enabled, checked, separatorBefore, false, action);
@@ -31,6 +32,12 @@ public final class UiPopup {
             this.checked = checked;
             this.separatorBefore = separatorBefore;
             this.action = action;
+        }
+
+        /** Draws the label in the given color (ARGB); 0 keeps the default. */
+        public Entry colored(int argb) {
+            this.color = argb;
+            return this;
         }
 
         public static Entry item(String label, Runnable action) {
@@ -110,13 +117,18 @@ public final class UiPopup {
         return Math.min(entries.size(), MAX_VISIBLE_ROWS);
     }
 
+    /** Height of the box: the tallest window of rows, so it does not grow or shrink while scrolling. */
     private int contentHeight() {
-        int h = 0;
         int rows = visibleRows();
-        for (int i = scroll; i < scroll + rows && i < entries.size(); i++) {
-            h += ROW_H + (entries.get(i).separatorBefore && i > scroll ? SEPARATOR_H : 0);
+        int best = 0;
+        for (int start = 0; start + rows <= entries.size(); start++) {
+            int h = 0;
+            for (int i = start; i < start + rows; i++) {
+                h += ROW_H + (entries.get(i).separatorBefore && i > start ? SEPARATOR_H : 0);
+            }
+            best = Math.max(best, h);
         }
-        return h + 4;
+        return best + 4;
     }
 
     public void draw(int mouseX, int mouseY) {
@@ -130,7 +142,7 @@ public final class UiPopup {
             Entry e = entries.get(i);
 
             if (e.separatorBefore && i > scroll) {
-                UiDraw.fill(x + 6, cy + SEPARATOR_H / 2, w - 12, 1, UiTheme.CARD_BORDER);
+                UiDraw.fill(x + 6, cy + SEPARATOR_H / 2, rowW() - 8, 1, UiTheme.CARD_BORDER);
                 cy += SEPARATOR_H;
             }
 
@@ -141,7 +153,7 @@ public final class UiPopup {
                 UiDraw.fill(x + 2, cy, rowW(), ROW_H, UiTheme.ACCENT);
             }
 
-            int color = !e.enabled ? UiTheme.TEXT_DISABLED : UiTheme.TEXT;
+            int color = !e.enabled ? UiTheme.TEXT_DISABLED : (e.color != 0 ? e.color : UiTheme.TEXT);
             if (e.checked) {
                 UiDraw.text(">", x + 7, cy + 5, hover ? UiTheme.TEXT : UiTheme.ACCENT_HOVER);
             }

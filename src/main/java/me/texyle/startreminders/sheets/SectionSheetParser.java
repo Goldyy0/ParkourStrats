@@ -46,7 +46,7 @@ public final class SectionSheetParser {
 
 		int maxLevels = map.getMaxSectionLevelsAllowed();
 		if (maxLevels < 1) maxLevels = 1;
-		if (maxLevels > 4) maxLevels = 4;
+		if (maxLevels > ParkourMap.MAX_SECTION_LEVELS) maxLevels = ParkourMap.MAX_SECTION_LEVELS;
 
 		// Build header->column index lookup
 		HashMap<String, Integer> colByName = new HashMap<String, Integer>();

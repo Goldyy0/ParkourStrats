@@ -39,6 +39,8 @@ public class GuiStrategyEditor extends UiScreen {
     /** Where "Save" returns to; null closes all screens. */
     private final GuiScreen after;
     private final boolean editMode;
+    /** Set when opened from the editor's "Add another strategy": after saving, go back to the editor. */
+    private boolean returnToEditor;
     private final boolean restored = SelectionState.isRestoredContext();
 
     private ArrayList<Reminder> reminders = new ArrayList<Reminder>();
@@ -67,6 +69,13 @@ public class GuiStrategyEditor extends UiScreen {
     /** Editor for a new strategy of the currently selected jump. */
     public static GuiStrategyEditor create(GuiScreen back, GuiScreen after) {
         return new GuiStrategyEditor(back, after, false);
+    }
+
+    /** Editor for one more strategy of the jump being edited; saving returns to that jump's editor. */
+    private static GuiStrategyEditor createFromEditor(GuiScreen back, GuiScreen after) {
+        GuiStrategyEditor editor = new GuiStrategyEditor(back, after, false);
+        editor.returnToEditor = true;
+        return editor;
     }
 
     /**
@@ -152,7 +161,7 @@ public class GuiStrategyEditor extends UiScreen {
         previewW = showPreview ? PREVIEW_W : 0;
 
         String[] labels = restored ? LEGACY_LABELS : NEW_LABELS;
-        int rows = 2 + labels.length + (editMode ? 1 : 0);
+        int rows = 2 + labels.length + (hasStrategyRow() ? 1 : 0);
         int rowH = Math.max(22, Math.min(28, h / rows));
         int fieldH = Math.max(16, Math.min(20, rowH - 4));
 
@@ -164,7 +173,7 @@ public class GuiStrategyEditor extends UiScreen {
         // Jump name (read-only) is drawn in drawContent at this row.
         rowY += rowH;
 
-        if (editMode) {
+        if (hasStrategyRow()) {
             strategyDropdown = add(new UiDropdown(popup, "Strategy", this::strategyLabel, this::strategyEntries),
                     fieldX, rowY, Math.min(190, fieldW), fieldH);
             useButton = add(new UiButton("Use in game", UiButton.Style.SECONDARY, this::useCurrentStrategy),
@@ -261,6 +270,11 @@ public class GuiStrategyEditor extends UiScreen {
         return (index >= 0 && index < reminders.size()) ? reminders.get(index) : null;
     }
 
+    /** The strategy picker (and "Use in game") exists only for the new format, which can hold several strategies. */
+    private boolean hasStrategyRow() {
+        return editMode && !restored;
+    }
+
     private String strategyLabel() {
         return (index + 1) + " / " + reminders.size();
     }
@@ -274,12 +288,10 @@ public class GuiStrategyEditor extends UiScreen {
         return entries;
     }
 
+    /** What a strategy is listed as: its Strategy line, so the entries can be told apart. */
     private static String summaryOf(Reminder r) {
-        if (r == null || r.lines == null) return "(empty)";
-        for (String s : r.lines) {
-            if (s != null && s.trim().length() > 0) return s.trim();
-        }
-        return "(empty)";
+        String strategy = ReminderColumns.field(r, 1).trim();
+        return strategy.isEmpty() ? "(empty)" : strategy;
     }
 
     private void showStrategy(int newIndex) {
@@ -303,8 +315,11 @@ public class GuiStrategyEditor extends UiScreen {
 
     private void openMoreMenu() {
         List<Entry> entries = new ArrayList<Entry>();
-        entries.add(Entry.item("Add another strategy", () ->
-                Minecraft.getMinecraft().displayGuiScreen(GuiStrategyEditor.create(parent, after))));
+        // The old format holds a single strategy per jump, so there is nothing to add there.
+        if (!restored) {
+            entries.add(Entry.item("Add another strategy", () ->
+                    Minecraft.getMinecraft().displayGuiScreen(GuiStrategyEditor.createFromEditor(parent, after))));
+        }
         entries.add(Entry.item("Back to sheet", this::backToSheet));
         entries.add(Entry.danger("Delete this strategy...", true, this::confirmDelete));
 
@@ -425,7 +440,14 @@ public class GuiStrategyEditor extends UiScreen {
             saveNewStrategy(x, y, z);
         }
 
-        Minecraft.getMinecraft().displayGuiScreen(after);
+        GuiScreen next = after;
+        if (returnToEditor && !editMode && !restored) {
+            // Back to the jump's editor, showing the strategy that was just added (the last one).
+            GuiStrategyEditor editor = new GuiStrategyEditor(parent, after, true);
+            if (!editor.reminders.isEmpty()) editor.index = editor.reminders.size() - 1;
+            next = editor;
+        }
+        Minecraft.getMinecraft().displayGuiScreen(next);
     }
 
     private void saveLegacyStrategy(int x, int y, int z) {
@@ -505,14 +527,14 @@ public class GuiStrategyEditor extends UiScreen {
         coordY.setInvalid(!parsable(coordY));
         coordZ.setInvalid(!parsable(coordZ));
 
-        if (editMode) {
+        if (hasStrategyRow()) {
             boolean active = isCurrentActive();
             useButton.enabled = !active;
             useButton.setLabel(active ? "In use" : "Use in game");
         }
 
         String[] labels = restored ? LEGACY_LABELS : NEW_LABELS;
-        int rows = 2 + labels.length + (editMode ? 1 : 0);
+        int rows = 2 + labels.length + (hasStrategyRow() ? 1 : 0);
         int rowH = Math.max(22, Math.min(28, contentH / rows));
         int fieldH = Math.max(16, Math.min(20, rowH - 4));
         int textOffset = (fieldH - 8) / 2 + 1;
@@ -525,7 +547,7 @@ public class GuiStrategyEditor extends UiScreen {
                 contentX + LABEL_W, rowY + textOffset, UiTheme.TEXT);
         rowY += rowH;
 
-        if (editMode) {
+        if (hasStrategyRow()) {
             UiDraw.text("STRATEGY", contentX, rowY + textOffset, UiTheme.TEXT_MUTED);
             rowY += rowH;
         }
