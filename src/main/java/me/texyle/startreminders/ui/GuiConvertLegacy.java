@@ -7,6 +7,7 @@ import net.minecraft.client.gui.GuiScreen;
 
 import me.texyle.startreminders.data.Jump;
 import me.texyle.startreminders.data.ParkourMap;
+import me.texyle.startreminders.data.ServerProfile;
 import me.texyle.startreminders.gui.StrategyFormat;
 import me.texyle.startreminders.persistence.BuiltinContainers;
 import me.texyle.startreminders.reminders.Reminder;
@@ -203,6 +204,10 @@ public class GuiConvertLegacy extends UiScreen {
             return;
         }
 
+        // The new strategy is created in Global, but the user stays where they were (RestoredStrats).
+        ServerProfile originServer = SelectionState.getSelectedServer();
+        ParkourMap originMap = SelectionState.getSelectedMap();
+
         SelectionState.setSelectedMap(globalMap);
         SelectionState.setSelectedJump(j);
 
@@ -226,6 +231,10 @@ public class GuiConvertLegacy extends UiScreen {
         } else {
             ChatUtils.info("Converted and removed legacy entry from RestoredStrats.");
         }
+
+        SelectionState.setSelectedServer(originServer);
+        SelectionState.setSelectedMap(originMap);
+        SelectionState.setSelectedJump(null); // the converted entry no longer exists there
 
         Minecraft.getMinecraft().displayGuiScreen(parent);
     }

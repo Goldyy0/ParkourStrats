@@ -30,6 +30,16 @@ public final class UserPreferences {
 		SettingsRepository.save();
 	}
 
+	/** Extra decimals (0..5) shown in the strategy editor live position readout. */
+	public static int getPlayerInfoExtraDecimals() {
+		return Math.max(0, Math.min(5, SettingsRepository.get().playerInfoExtraDecimals));
+	}
+
+	public static void setPlayerInfoExtraDecimals(int decimals) {
+		SettingsRepository.get().playerInfoExtraDecimals = Math.max(0, Math.min(5, decimals));
+		SettingsRepository.save();
+	}
+
 	public static boolean isGlobalShowJumpNameEnabled() {
 		return SettingsRepository.get().showJumpNameInWorld;
 	}

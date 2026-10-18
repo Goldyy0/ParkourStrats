@@ -1,11 +1,15 @@
 package me.texyle.startreminders.ui;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.util.MathHelper;
+import org.lwjgl.input.Mouse;
 
 import me.texyle.startreminders.data.Jump;
 import me.texyle.startreminders.data.ParkourMap;
@@ -198,10 +202,18 @@ public class GuiStrategyEditor extends UiScreen {
         for (int i = 0; i < labels.length; i++) {
             int max = restored ? 160 : NEW_MAX_LENGTH[i];
             fields[i] = add(new UiTextField(draft != null ? draft[i] : "", max), fieldX, rowY, fieldW, fieldH);
+            if (i == 0 && !restored) {
+                // ">" right of the POSITION label: fills the field with where the player stands.
+                add(new PositionFillButton(), contentX + UiDraw.width("POSITION") + 5, rowY, 12, fieldH);
+            }
             rowY += rowH;
         }
         if (draft == null) {
             loadFields(editMode ? currentLines() : null);
+            if (!editMode && !restored) {
+                // A new strategy starts with the facing the player has right now.
+                fields[1].setText(facingText());
+            }
         }
         fields[0].setFocused(true);
 
@@ -213,6 +225,9 @@ public class GuiStrategyEditor extends UiScreen {
         } else {
             addFooter(cancel, saveButton);
         }
+
+        // Last, so its slider is drawn above the form.
+        add(new PlayerInfoWidget(), contentX, footerY(), Math.max(60, contentW - 250), UiTheme.CONTROL_HEIGHT);
 
         draft = null;
         draftCoords = null;
@@ -563,6 +578,188 @@ public class GuiStrategyEditor extends UiScreen {
         if (previewW > 0) {
             drawPreview(jump);
         }
+
+    }
+
+    /** The player's facing as shown in F3, one decimal, e.g. "-12.3". */
+    private static String facingText() {
+        EntityPlayerSP player = Minecraft.getMinecraft().thePlayer;
+        if (player == null) return "";
+        return decimalString(MathHelper.wrapAngleTo180_float(player.rotationYaw), 1, RoundingMode.HALF_UP);
+    }
+
+    /** Only the three decimals of X and Z, e.g. "x.345 z.890"; Y is left out. */
+    private static String positionText() {
+        EntityPlayerSP player = Minecraft.getMinecraft().thePlayer;
+        if (player == null) return "";
+        return "x" + fraction(player.posX, 3) + " z" + fraction(player.posZ, 3);
+    }
+
+    private void fillPosition() {
+        final String position = positionText();
+        if (position.isEmpty()) return;
+
+        if (fields[0].getText().trim().isEmpty()) {
+            fields[0].setText(position);
+            return;
+        }
+
+        Minecraft.getMinecraft().displayGuiScreen(new GuiConfirm(this, "Overwrite position",
+                "POSITION is not empty. Overwrite it?", new GuiConfirm.IConfirmHandler() {
+                    @Override
+                    public void onYes() {
+                        fields[0].setText(position);
+                    }
+
+                    @Override
+                    public void onNo() { }
+                }));
+    }
+
+    /** The small ">" next to the POSITION label. */
+    private final class PositionFillButton extends UiWidget {
+        @Override
+        public void draw(int mouseX, int mouseY) {
+            boolean hover = contains(mouseX, mouseY);
+            UiDraw.text(">", x + 2, y + (h - 8) / 2 + 1, hover ? UiTheme.TEXT : UiTheme.TEXT_MUTED);
+        }
+
+        @Override
+        public boolean mouseClicked(int mouseX, int mouseY, int button) {
+            if (button != 0 || !contains(mouseX, mouseY)) return false;
+            fillPosition();
+            return true;
+        }
+    }
+
+    /**
+     * Bottom-left: where the player stands right now, in the form parkour cares about: only the decimals of X and Z
+     * (".nnn"), the block height, and the facing. The arrow opens a slider that adds up to five more decimals to
+     * every value; the choice is a global setting.
+     */
+    private final class PlayerInfoWidget extends UiWidget {
+
+        private static final int SLIDER_W = 150;
+        private static final int SLIDER_H = 20;
+        private static final int TRACK_PAD = 10;
+        private static final int TRACK_W = 84;
+
+        private boolean open;
+        private boolean dragging;
+        private int arrowX;
+
+        @Override
+        public void draw(int mouseX, int mouseY) {
+            EntityPlayerSP player = Minecraft.getMinecraft().thePlayer;
+            if (player == null) return;
+
+            int extra = UserPreferences.getPlayerInfoExtraDecimals();
+            String[][] parts = {
+                    { "x: ", fraction(player.posX, 3 + extra) },
+                    { "y: ", decimalString(player.posY, 2 + extra, RoundingMode.FLOOR) },
+                    { "z: ", fraction(player.posZ, 3 + extra) },
+                    { "F: ", decimalString(MathHelper.wrapAngleTo180_float(player.rotationYaw), 1 + extra, RoundingMode.HALF_UP) }
+            };
+
+            int tx = x;
+            int ty = y + (UiTheme.CONTROL_HEIGHT - 8) / 2;
+            for (String[] part : parts) {
+                UiDraw.text(part[0], tx, ty, UiTheme.TEXT_MUTED);
+                tx += UiDraw.width(part[0]);
+                UiDraw.text(part[1], tx, ty, UiTheme.TEXT);
+                tx += UiDraw.width(part[1]) + 10;
+            }
+
+            arrowX = tx;
+            boolean hover = UiDraw.inside(mouseX, mouseY, arrowX - 3, y, 14, UiTheme.CONTROL_HEIGHT);
+            UiDraw.text(">", arrowX, ty, open || hover ? UiTheme.TEXT : UiTheme.TEXT_MUTED);
+
+            if (open) drawSlider(mouseX);
+        }
+
+        // Horizontally centered on the screen, just above the readout's row. It must not follow the arrow, whose
+        // position changes with the slider value (that made it jump away from the mouse while dragging).
+        private int sliderX() {
+            return (GuiStrategyEditor.this.width - SLIDER_W) / 2;
+        }
+
+        private int sliderY() {
+            return y - SLIDER_H - 4;
+        }
+
+        private void drawSlider(int mouseX) {
+            int bx = sliderX();
+            int by = sliderY();
+            UiDraw.box(bx, by, SLIDER_W, SLIDER_H, UiTheme.PANEL_BG | 0xFF000000, UiTheme.CONTROL_BORDER);
+
+            int trackX = bx + TRACK_PAD;
+            int trackY = by + SLIDER_H / 2;
+
+            if (dragging) {
+                if (Mouse.isButtonDown(0)) {
+                    setFromMouse(mouseX, trackX);
+                } else {
+                    dragging = false;
+                }
+            }
+
+            int value = UserPreferences.getPlayerInfoExtraDecimals();
+            UiDraw.fill(trackX, trackY, TRACK_W, 2, UiTheme.CARD_BORDER);
+            UiDraw.fill(trackX, trackY, TRACK_W * value / 5, 2, UiTheme.ACCENT);
+            for (int i = 0; i <= 5; i++) {
+                UiDraw.fill(trackX + TRACK_W * i / 5, trackY - 3, 1, 8, i <= value ? UiTheme.ACCENT_HOVER : UiTheme.CONTROL_BORDER);
+            }
+            int thumbX = trackX + TRACK_W * value / 5;
+            UiDraw.box(thumbX - 3, trackY - 6, 6, 14, UiTheme.ACCENT, UiTheme.ACCENT_HOVER);
+
+            UiDraw.text("+" + value, bx + SLIDER_W - 26, by + (SLIDER_H - 8) / 2, UiTheme.TEXT);
+        }
+
+        private void setFromMouse(int mouseX, int trackX) {
+            double t = (mouseX - trackX) / (double) TRACK_W;
+            int value = (int) Math.round(Math.max(0.0, Math.min(1.0, t)) * 5);
+            if (value != UserPreferences.getPlayerInfoExtraDecimals()) {
+                UserPreferences.setPlayerInfoExtraDecimals(value);
+            }
+        }
+
+        @Override
+        public boolean mouseClicked(int mouseX, int mouseY, int button) {
+            if (button != 0) return false;
+
+            if (UiDraw.inside(mouseX, mouseY, arrowX - 3, y, 14, UiTheme.CONTROL_HEIGHT)) {
+                open = !open;
+                dragging = false;
+                return true;
+            }
+
+            if (open && UiDraw.inside(mouseX, mouseY, sliderX(), sliderY(), SLIDER_W, SLIDER_H)) {
+                int trackX = sliderX() + TRACK_PAD;
+                if (mouseX >= trackX - 6 && mouseX <= trackX + TRACK_W + 6) {
+                    dragging = true;
+                    setFromMouse(mouseX, trackX);
+                }
+                return true;
+            }
+
+            if (open) {
+                // A click anywhere else closes the slider and is not passed on, so it cannot hit a button by accident.
+                open = false;
+                dragging = false;
+                return true;
+            }
+            return false;
+        }
+    }
+
+    /** The decimals of a coordinate with the given number of digits, e.g. -12.3456 with 3 gives ".345". */
+    private static String fraction(double value, int digits) {
+        String full = decimalString(Math.abs(value), digits, RoundingMode.DOWN);
+        return full.substring(full.indexOf('.'));
+    }
+
+    private static String decimalString(double value, int digits, RoundingMode mode) {
+        return new BigDecimal(value).setScale(digits, mode).toPlainString();
     }
 
     /** Approximates the in-world text: position, facing and setup on one line, then strategy, strafe, turn. */

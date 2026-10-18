@@ -17,4 +17,7 @@ public class ModSettings {
     // Jump table: sections as a narrow color stripe (name shown on hover) instead of full columns.
     // Default is true.
     public boolean sectionsCompact = true;
+
+    // Strategy editor: extra decimals (0..5) in the live position readout. Default is 0.
+    public int playerInfoExtraDecimals = 0;
 }
