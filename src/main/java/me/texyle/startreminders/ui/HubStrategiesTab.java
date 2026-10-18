@@ -62,10 +62,10 @@ final class HubStrategiesTab implements HubTab {
 
         newButton = new UiButton("+ New strategy", UiButton.Style.PRIMARY, this::onPrimaryAction);
 
-        editButton = new UiButton("Edit", UiButton.Style.SECONDARY, this::editSelected);
+        editButton = new UiButton("Edit", UiButton.Style.SECONDARY, this::editOrConvertSelected);
         moreButton = new UiButton("More", UiButton.Style.GHOST, this::openJumpMenu);
 
-        table.setOnActivate(jump -> editSelected());
+        table.setOnActivate(jump -> editOrConvertSelected());
         searchField.onChange(table::setFilter);
 
         widgets.add(serverDropdown);
@@ -162,6 +162,7 @@ final class HubStrategiesTab implements HubTab {
 
     @Override
     public void onShow() {
+        table.clearZoom();
         syncFromSelection();
         rebuildTable();
     }
@@ -206,6 +207,7 @@ final class HubStrategiesTab implements HubTab {
         Jump selected = SelectionState.getSelectedJump();
         if (selected != null && table.isShowing(selected)) {
             table.selectJump(selected);
+            table.ensureSelectedVisible();
         } else if (table.getSelectedJump() != null && !table.isShowing(table.getSelectedJump())) {
             table.selectJump(null);
         }
@@ -217,6 +219,17 @@ final class HubStrategiesTab implements HubTab {
 
     private Jump selectedJump() {
         return table.getSelectedJump();
+    }
+
+    /** In RestoredStrats the old format is converted instead of edited. */
+    private void editOrConvertSelected() {
+        Jump jump = selectedJump();
+        if (jump == null) return;
+        if (isRestoredMap()) {
+            convertToGlobal(jump);
+        } else {
+            editSelected();
+        }
     }
 
     private void editSelected() {
@@ -245,7 +258,8 @@ final class HubStrategiesTab implements HubTab {
     }
 
     private void placePrimaryButton() {
-        newButton.setLabel(isRestoredMap() ? "Import old strategies" : "+ New strategy");
+        newButton.setLabel(isRestoredMap() ? "Import" : "+ New strategy");
+        editButton.setLabel(isRestoredMap() ? "Convert" : "Edit");
         int newW = newButton.preferredWidth();
         newButton.setBounds(x + w - newW, y, newW, TOOLBAR_H);
     }
@@ -284,7 +298,7 @@ final class HubStrategiesTab implements HubTab {
         } else {
             entries.add(Entry.item("Transfer to...", () -> hub.open(new GuiTransferJump(hub, map, jump))));
         }
-        entries.add(Entry.afterSeparator("Remove...", true, () -> removeJump(jump)));
+        entries.add(Entry.danger("Remove...", true, () -> removeJump(jump)));
 
         popup.open(moreButton.x + moreButton.w - 180, moreButton.y - entries.size() * 18 - 12, 180, entries);
     }
@@ -362,7 +376,7 @@ final class HubStrategiesTab implements HubTab {
             empty = "No map selected";
         } else if (!hasJumps) {
             empty = "No jumps in this map yet";
-            hint = isRestoredMap() ? "Use Import old strategies to bring them in" : "Use + New strategy to add the first one";
+            hint = isRestoredMap() ? "Use Import to bring in your old strategies" : "Use + New strategy to add the first one";
         } else {
             empty = "No jumps match your search";
         }
@@ -415,6 +429,22 @@ final class HubStrategiesTab implements HubTab {
         if (ctrl && keyCode == Keyboard.KEY_F && searchField.visible) {
             searchField.setFocused(true);
             return true;
+        }
+
+        // Zoom shortcuts for the table: Ctrl + / Ctrl - and Ctrl 0 to reset (Ctrl + wheel zooms at the cursor).
+        if (ctrl && !searchField.isFocused()) {
+            if (keyCode == Keyboard.KEY_EQUALS || keyCode == Keyboard.KEY_ADD) {
+                table.zoomCentered(1);
+                return true;
+            }
+            if (keyCode == Keyboard.KEY_MINUS || keyCode == Keyboard.KEY_SUBTRACT) {
+                table.zoomCentered(-1);
+                return true;
+            }
+            if (keyCode == Keyboard.KEY_0 || keyCode == Keyboard.KEY_NUMPAD0) {
+                table.resetZoom();
+                return true;
+            }
         }
 
         if (searchField.isFocused()) {

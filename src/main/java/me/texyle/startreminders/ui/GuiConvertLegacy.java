@@ -30,6 +30,7 @@ public class GuiConvertLegacy extends UiScreen {
     private final String newJumpName;
 
     private UiTextField[] fields;
+    private UiTextField[] legacyFields;
     private UiTextField coordX;
     private UiTextField coordY;
     private UiTextField coordZ;
@@ -81,6 +82,25 @@ public class GuiConvertLegacy extends UiScreen {
 
         int rowY = y + 24;
 
+        // Old (read-only) side: the same rows as the new side, so both line up.
+        int oldFieldX = x + LABEL_W;
+        int oldFieldW = leftW - LABEL_W;
+        int oldY = rowY;
+        ArrayList<String> oldLines = getLegacyLines();
+        UiTextField oldCoords = add(new UiTextField(legacyJump != null
+                ? legacyJump.getX() + ", " + legacyJump.getY() + ", " + legacyJump.getZ() : "-", 40),
+                oldFieldX, oldY, oldFieldW, fieldH);
+        oldCoords.setReadOnly(true);
+        oldY += rowH;
+        String[] legacy = StrategyFormat.restoredEditorLines(oldLines);
+        legacyFields = new UiTextField[legacy.length];
+        for (int i = 0; i < legacy.length; i++) {
+            legacyFields[i] = add(new UiTextField(legacy[i] != null ? legacy[i] : "", 200),
+                    oldFieldX, oldY, oldFieldW, fieldH);
+            legacyFields[i].setReadOnly(true);
+            oldY += rowH;
+        }
+
         int third = (fieldW - 8) / 3;
         int lx = legacyJump != null ? legacyJump.getX() : 0;
         int ly = legacyJump != null ? legacyJump.getY() : 0;
@@ -117,19 +137,14 @@ public class GuiConvertLegacy extends UiScreen {
         // Old (read-only) side
         UiDraw.card(contentX, contentY, leftW, cardH, "Old strategy");
 
-        int textY = contentY + 28;
-        int lineH = UiDraw.font().FONT_HEIGHT + 6;
-        UiDraw.text("COORDS", contentX + UiTheme.PADDING, textY, UiTheme.TEXT_MUTED);
-        String coords = legacyJump != null ? legacyJump.getX() + ", " + legacyJump.getY() + ", " + legacyJump.getZ() : "-";
-        UiDraw.text(coords, contentX + UiTheme.PADDING + LABEL_W, textY, UiTheme.TEXT);
-        textY += lineH + 4;
-
-        String[] legacy = StrategyFormat.restoredEditorLines(getLegacyLines());
-        for (int i = 0; i < legacy.length; i++) {
-            UiDraw.text(("LINE " + (i + 1)), contentX + UiTheme.PADDING, textY, UiTheme.TEXT_MUTED);
-            UiDraw.text(UiDraw.fit(legacy[i], leftW - LABEL_W - UiTheme.PADDING * 2),
-                    contentX + UiTheme.PADDING + LABEL_W, textY, UiTheme.TEXT);
-            textY += lineH;
+        int fieldH = Math.max(16, Math.min(20, rowH - 4));
+        int labelOffset = (fieldH - 8) / 2 + 1;
+        int oldRowY = contentY + 24;
+        UiDraw.text("COORDS", contentX + UiTheme.PADDING, oldRowY + labelOffset, UiTheme.TEXT_MUTED);
+        oldRowY += rowH;
+        for (int i = 0; i < legacyFields.length; i++) {
+            UiDraw.text("LINE " + (i + 1), contentX + UiTheme.PADDING, oldRowY + labelOffset, UiTheme.TEXT_MUTED);
+            oldRowY += rowH;
         }
 
         // New (editable) side

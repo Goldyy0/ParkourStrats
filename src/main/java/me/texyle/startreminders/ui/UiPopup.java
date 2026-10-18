@@ -18,8 +18,14 @@ public final class UiPopup {
         final boolean checked;
         final Runnable action;
         final boolean separatorBefore;
+        final boolean danger;
 
         public Entry(String label, boolean enabled, boolean checked, boolean separatorBefore, Runnable action) {
+            this(label, enabled, checked, separatorBefore, false, action);
+        }
+
+        private Entry(String label, boolean enabled, boolean checked, boolean separatorBefore, boolean danger, Runnable action) {
+            this.danger = danger;
             this.label = label;
             this.enabled = enabled;
             this.checked = checked;
@@ -39,6 +45,11 @@ public final class UiPopup {
             return new Entry(label, true, checked, false, action);
         }
 
+        /** A destructive action (remove, delete): red row, with a divider line above it. */
+        public static Entry danger(String label, boolean enabled, Runnable action) {
+            return new Entry(label, enabled, false, true, true, action);
+        }
+
         /** Same as {@link #item(String, boolean, Runnable)} with a divider line above it. */
         public static Entry afterSeparator(String label, boolean enabled, Runnable action) {
             return new Entry(label, enabled, false, true, action);
@@ -55,6 +66,7 @@ public final class UiPopup {
     private int w;
     private int scroll;
     private boolean open;
+    private final VerticalScrollbar scrollbar = new VerticalScrollbar();
 
     public boolean isOpen() {
         return open;
@@ -82,8 +94,16 @@ public final class UiPopup {
         this.w = width;
         this.x = Math.max(4, Math.min(x, sr.getScaledWidth() - width - 4));
         this.y = Math.max(4, Math.min(y, sr.getScaledHeight() - contentHeight() - 4));
-        this.scroll = 0;
         this.open = true;
+
+        // Long lists start at the entry that is currently chosen, so it does not have to be scrolled to.
+        this.scroll = 0;
+        for (int i = 0; i < entries.size(); i++) {
+            if (entries.get(i).checked) {
+                this.scroll = Math.min(i, Math.max(0, entries.size() - MAX_VISIBLE_ROWS));
+                break;
+            }
+        }
     }
 
     private int visibleRows() {
@@ -114,8 +134,10 @@ public final class UiPopup {
                 cy += SEPARATOR_H;
             }
 
-            boolean hover = e.enabled && UiDraw.inside(mouseX, mouseY, x + 2, cy, w - 4, ROW_H);
-            if (hover) {
+            boolean hover = e.enabled && !overScrollbar(mouseX, mouseY) && UiDraw.inside(mouseX, mouseY, x + 2, cy, w - 4, ROW_H);
+            if (e.danger && e.enabled) {
+                UiDraw.fill(x + 2, cy, w - 4, ROW_H, hover ? UiTheme.DANGER_HOVER : UiTheme.DANGER);
+            } else if (hover) {
                 UiDraw.fill(x + 2, cy, w - 4, ROW_H, UiTheme.ACCENT);
             }
 
@@ -128,13 +150,24 @@ public final class UiPopup {
         }
 
         if (entries.size() > MAX_VISIBLE_ROWS) {
-            UiDraw.text("...", x + w - 16, y + totalH - 12, UiTheme.TEXT_MUTED);
+            // Works in row units (each row ROW_H tall), inside the right edge of the box.
+            scrollbar.draw(y + 2, y + totalH - 2, x + w, scroll * ROW_H, entries.size() * ROW_H);
+            float dragged = scrollbar.updateDrag(mouseX, mouseY, scroll * ROW_H);
+            scroll = Math.max(0, Math.min(Math.round(dragged / ROW_H), entries.size() - MAX_VISIBLE_ROWS));
         }
+    }
+
+    private boolean overScrollbar(int mouseX, int mouseY) {
+        return entries != null && entries.size() > MAX_VISIBLE_ROWS && scrollbar.isMouseOver(mouseX, mouseY);
     }
 
     /** @return always true while open: the click is consumed, and closes the popup unless it hit a row. */
     public boolean mouseClicked(int mouseX, int mouseY, int button) {
         if (!open) return false;
+
+        if (button == 0 && overScrollbar(mouseX, mouseY)) {
+            return true; // the scrollbar handles the drag; the popup stays open
+        }
 
         if (button == 0) {
             int cy = y + 2;

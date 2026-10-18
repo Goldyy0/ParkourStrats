@@ -9,6 +9,7 @@ import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.ScaledResolution;
+import net.minecraft.client.renderer.GlStateManager;
 import org.lwjgl.input.Keyboard;
 
 import me.texyle.startreminders.data.Jump;
@@ -35,11 +36,17 @@ public class UiJumpTable extends UiWidget {
     private static final char SECTION_SIGN = (char) 0xA7;
 
     private static final int HEADER_H = 20;
+    /** Room the scrollbars take next to / below the table frame (6px bar plus a 2px gap). */
     private static final int BAR = 8;
     private static final int PAD_X = 5;
     private static final int PAD_Y = 4;
     private static final int ROW_H = 22;
     private static final int TOOLTIP_MAX_W = 280;
+
+    private static final float MIN_ZOOM = 0.1f;
+    private static final float MAX_ZOOM = 1.0f;
+    private static final float ZOOM_STEP = 1.2f;
+    private static final long ZOOM_LABEL_MS = 1200L;
     private static final int WHEEL_STEP = 24;
     private static final long DOUBLE_CLICK_MS = 320L;
 
@@ -114,14 +121,22 @@ public class UiJumpTable extends UiWidget {
     private boolean needH;
     private boolean frozenEnabled;
     private int frozenW;
+    // Layout is done in "content units"; the body is drawn scaled by the zoom, so on screen it is
+    // viewW * zoom wide (viewWs) and bodyH * zoom tall (bodyHs).
     private int viewW;
     private int bodyH;
+    private int viewWs;
+    private int bodyHs;
     private int scrollViewW;
     private int scrollColsW;
     private int contentH;
 
     private final HorizontalScroller hScroller = new HorizontalScroller();
     private final VerticalScrollbar vScroller = new VerticalScrollbar();
+
+    /** Zoom level; every new table (a new hub window) starts at 100 %. */
+    private float zoom = 1f;
+    private long zoomLabelUntil = 0L;
 
     private int hoverRow = -1;
     private int lastClickedGroup = -1;
@@ -345,14 +360,13 @@ public class UiJumpTable extends UiWidget {
         sectionCount = map != null ? Math.max(0, Math.min(4, map.getEffectiveSectionsCount())) : 0;
         compactSections = UserPreferences.isSectionsCompact();
 
-        int innerW = w - 2;
-        int availH = h - 2 - HEADER_H;
-
         needV = false;
         for (int pass = 0; pass < 3; pass++) {
-            viewW = innerW - (needV ? BAR : 0);
+            viewWs = frameW() - 2;
+            viewW = (int) Math.ceil(viewWs / zoom);
             buildColumns();
-            bodyH = availH - (needH ? BAR : 0);
+            bodyHs = frameH() - 2 - HEADER_H;
+            bodyH = (int) Math.ceil(bodyHs / zoom);
             computeRowHeights();
 
             boolean v = contentH > bodyH;
@@ -498,6 +512,16 @@ public class UiJumpTable extends UiWidget {
     // Geometry helpers
     // -------------------------
 
+    /** Width of the table frame; with a vertical scrollbar its band is left free on the right. */
+    private int frameW() {
+        return w - (needV ? BAR : 0);
+    }
+
+    /** Height of the table frame; with a horizontal scrollbar its band is left free at the bottom. */
+    private int frameH() {
+        return h - (needH ? BAR : 0);
+    }
+
     private int bodyLeft() {
         return x + 1;
     }
@@ -506,17 +530,32 @@ public class UiJumpTable extends UiWidget {
         return y + 1 + HEADER_H;
     }
 
-    /** Screen x of a column's left edge. */
+    /** Scaled size: content units to screen pixels. */
+    private int sw(int contentSize) {
+        return Math.round(contentSize * zoom);
+    }
+
+    /** Position of a column's left edge in content units, relative to the left of the body. */
+    private double contentX(Col c) {
+        if (c.frozen) return c.regionX;
+        return frozenW + c.regionX - hScroller.getOffset();
+    }
+
+    /** Left edge of a column in the (unscaled) space the body is drawn in. */
+    private int colUnscaledX(Col c) {
+        return bodyLeft() + (int) Math.round(contentX(c));
+    }
+
+    /** Left edge of a column on screen. */
     private int colScreenX(Col c) {
-        if (c.frozen) return bodyLeft() + c.regionX;
-        return bodyLeft() + frozenW + c.regionX - (int) Math.round(hScroller.getOffset());
+        return bodyLeft() + (int) Math.round(contentX(c) * zoom);
     }
 
     private int rowAt(int mouseX, int mouseY) {
-        if (mouseX < bodyLeft() || mouseX >= bodyLeft() + viewW) return -1;
-        if (mouseY < bodyTop() || mouseY >= bodyTop() + bodyH) return -1;
+        if (mouseX < bodyLeft() || mouseX >= bodyLeft() + viewWs) return -1;
+        if (mouseY < bodyTop() || mouseY >= bodyTop() + bodyHs) return -1;
 
-        int contentY = (int) scroll + (mouseY - bodyTop());
+        int contentY = (int) (scroll + (mouseY - bodyTop()) / zoom);
         for (int i = 0; i < rows.size(); i++) {
             Row r = rows.get(i);
             if (contentY >= r.top && contentY < r.top + r.height) return i;
@@ -525,7 +564,7 @@ public class UiJumpTable extends UiWidget {
     }
 
     private boolean overScrollbars(int mouseX, int mouseY) {
-        return (needV && mouseX >= x + w - 1 - BAR) || (needH && mouseY >= y + h - 1 - BAR);
+        return (needV && mouseX >= x + frameW()) || (needH && mouseY >= y + frameH());
     }
 
     // -------------------------
@@ -538,7 +577,7 @@ public class UiJumpTable extends UiWidget {
         ensureLayout();
         clampScroll();
 
-        UiDraw.box(x, y, w, h, UiTheme.CARD_BG, UiTheme.CARD_BORDER);
+        UiDraw.box(x, y, frameW(), frameH(), UiTheme.CARD_BG, UiTheme.CARD_BORDER);
 
         hoverRow = overScrollbars(mouseX, mouseY) ? -1 : rowAt(mouseX, mouseY);
 
@@ -546,33 +585,36 @@ public class UiJumpTable extends UiWidget {
 
         if (rows.isEmpty()) {
             if (!emptyText.isEmpty()) {
-                UiDraw.centered(emptyText, x + w / 2, bodyTop() + bodyH / 2 - 4, UiTheme.TEXT_MUTED);
+                UiDraw.centered(emptyText, x + w / 2, bodyTop() + bodyHs / 2 - 4, UiTheme.TEXT_MUTED);
             }
         } else {
             drawBody();
         }
 
         drawScrollbars(mouseX, mouseY);
+        drawZoomLabel();
         drawTooltip(mouseX, mouseY);
     }
 
     private void drawHeader() {
         int left = bodyLeft();
         int top = y + 1;
+        int frozenWs = sw(frozenW);
+        Minecraft mc = Minecraft.getMinecraft();
 
-        UiDraw.fill(left, top, w - 2, HEADER_H, UiTheme.TABLE_HEADER_BG);
-        UiDraw.fill(left, top + HEADER_H - 1, w - 2, 1, UiTheme.CARD_BORDER);
+        UiDraw.fill(left, top, viewWs, HEADER_H, UiTheme.TABLE_HEADER_BG);
+        UiDraw.fill(left, top + HEADER_H - 1, viewWs, 1, UiTheme.CARD_BORDER);
 
         // Scrolling columns first; frozen ones are drawn on top so scrolled text never shows through them.
-        GuiScissor.enable(Minecraft.getMinecraft(), left + frozenW, top, viewW - frozenW, HEADER_H);
+        GuiScissor.enable(mc, left + frozenWs, top, viewWs - frozenWs, HEADER_H);
         for (Col c : cols) {
             if (!c.frozen) drawHeaderCell(c, top);
         }
         GuiScissor.disable();
 
         if (frozenW > 0) {
-            UiDraw.fill(left, top, frozenW, HEADER_H - 1, UiTheme.TABLE_HEADER_BG);
-            GuiScissor.enable(Minecraft.getMinecraft(), left, top, frozenW, HEADER_H);
+            UiDraw.fill(left, top, frozenWs, HEADER_H - 1, UiTheme.TABLE_HEADER_BG);
+            GuiScissor.enable(mc, left, top, frozenWs, HEADER_H);
             for (Col c : cols) {
                 if (c.frozen) drawHeaderCell(c, top);
             }
@@ -599,8 +641,9 @@ public class UiJumpTable extends UiWidget {
         }
 
         int cx = colScreenX(c);
-        UiDraw.text(UiDraw.fit(title.toUpperCase(), c.width - PAD_X * 2), cx + PAD_X, top + (HEADER_H - 8) / 2, UiTheme.TEXT_MUTED);
-        UiDraw.fill(cx + c.width - 1, top + 4, 1, HEADER_H - 9, COLOR_COLUMN_LINE);
+        int cw = sw(c.width);
+        UiDraw.text(UiDraw.fit(title.toUpperCase(), cw - PAD_X * 2), cx + PAD_X, top + (HEADER_H - 8) / 2, UiTheme.TEXT_MUTED);
+        UiDraw.fill(cx + cw - 1, top + 4, 1, HEADER_H - 9, COLOR_COLUMN_LINE);
     }
 
     private void drawBody() {
@@ -609,10 +652,19 @@ public class UiJumpTable extends UiWidget {
         int first = findFirstVisibleRow();
         int end = first;
         while (end < rows.size() && top + rows.get(end).top - (int) scroll < top + bodyH) end++;
+
         Minecraft mc = Minecraft.getMinecraft();
+        int frozenWs = sw(frozenW);
+
+        // Everything below is laid out in content units and scaled around the top-left corner of the body.
+        // (Scissor rectangles are in screen pixels and are not affected by the scale.)
+        GlStateManager.pushMatrix();
+        GlStateManager.translate(left, top, 0f);
+        GlStateManager.scale(zoom, zoom, 1f);
+        GlStateManager.translate(-left, -top, 0f);
 
         // Pass 1: the scrolling region.
-        GuiScissor.enable(mc, left + frozenW, top, viewW - frozenW, bodyH);
+        GuiScissor.enable(mc, left + frozenWs, top, viewWs - frozenWs, bodyHs);
         for (int i = first; i < end; i++) {
             Row r = rows.get(i);
             drawRowBackground(r, top + r.top - (int) scroll, left + frozenW, viewW - frozenW, false);
@@ -620,7 +672,7 @@ public class UiJumpTable extends UiWidget {
         for (int i = first; i < end; i++) {
             Row r = rows.get(i);
             for (Col c : cols) {
-                if (!c.frozen) drawCell(r, c, colScreenX(c), top + r.top - (int) scroll, i == first);
+                if (!c.frozen) drawCell(r, c, colUnscaledX(c), top + r.top - (int) scroll, i == first);
             }
         }
         GuiScissor.disable();
@@ -628,7 +680,7 @@ public class UiJumpTable extends UiWidget {
         // Pass 2: the frozen region, over the scrolled one. All backgrounds first, because a jump's name
         // may run over the rows of its other strategies.
         if (frozenW > 0) {
-            GuiScissor.enable(mc, left, top, frozenW, bodyH);
+            GuiScissor.enable(mc, left, top, frozenWs, bodyHs);
             for (int i = first; i < end; i++) {
                 Row r = rows.get(i);
                 drawRowBackground(r, top + r.top - (int) scroll, left, frozenW, true);
@@ -636,44 +688,16 @@ public class UiJumpTable extends UiWidget {
             for (int i = first; i < end; i++) {
                 Row r = rows.get(i);
                 for (Col c : cols) {
-                    if (c.frozen) drawCell(r, c, colScreenX(c), top + r.top - (int) scroll, i == first);
+                    if (c.frozen) drawCell(r, c, colUnscaledX(c), top + r.top - (int) scroll, i == first);
                 }
             }
             GuiScissor.disable();
 
-            drawStripeExtension(top);
-
-            // Divider, with a soft shadow while content is scrolled under it.
+            // Divider between the frozen and the scrolling part.
             UiDraw.fill(left + frozenW - 1, top, 1, bodyH, COLOR_GROUP_LINE);
-            if (hScroller.getOffset() > 0.5) {
-                UiDraw.fill(left + frozenW, top, 3, bodyH, 0x33000000);
-            }
-        }
-    }
-
-    /**
-     * The section stripes continue down through the strip of the horizontal scrollbar, to the end of the table,
-     * in the color the next row would have (or the last row's when the content ends).
-     */
-    private void drawStripeExtension(int top) {
-        if (!needH || !frozenEnabled || sectionCount == 0 || rows.isEmpty()) return;
-
-        float probe = scroll + bodyH;
-        Row row = rows.get(rows.size() - 1);
-        for (Row r : rows) {
-            if (probe >= r.top && probe < r.top + r.height) {
-                row = r;
-                break;
-            }
         }
 
-        for (Col c : cols) {
-            if (c.kind != Kind.SECTION || !c.frozen) continue;
-            int tint = sectionTint(row, c.index);
-            if (tint != 0) {
-                UiDraw.fill(colScreenX(c), top + bodyH, c.width, BAR, tint);
-            }
-        }
+        GlStateManager.popMatrix();
     }
 
     private int findFirstVisibleRow() {
@@ -823,23 +847,26 @@ public class UiJumpTable extends UiWidget {
     }
 
     private void drawScrollbars(int mouseX, int mouseY) {
+        // The bars sit outside the frame, along its whole length: the vertical one right of it (header
+        // included), the horizontal one below it. They work in screen units: the scroll range of the rows is
+        // the same, but scaled by the zoom.
         if (needV) {
-            vScroller.draw(bodyTop(), bodyTop() + bodyH, x + w, scroll, contentH);
+            int frameH = frameH();
+            vScroller.draw(y, y + frameH, x + w + 2, scroll * zoom, Math.round(contentH * zoom + (frameH - bodyHs)));
         } else {
-            vScroller.draw(bodyTop(), bodyTop() + bodyH, x + w, 0f, 0);
+            vScroller.draw(y, y + frameH(), x + w + 2, 0f, 0);
         }
 
         if (needH) {
-            int yTop = y + h - 1 - BAR + 2;
-            // The bar spans the whole table width, although it only moves the scrolling part on the right.
-            hScroller.draw(bodyLeft() + 2, bodyLeft() + viewW - 2, yTop, yTop + 4, scrollViewW, scrollColsW);
+            // Spans the whole frame width, although it only moves the scrolling part on the right.
+            hScroller.draw(x, x + frameW(), y + h - 6, y + h, scrollViewW, scrollColsW);
         } else {
             hScroller.draw(0, 0, 0, 0, 1, 0);
         }
 
         // While one scrollbar is dragged the other one is locked, so brushing past it cannot move it.
         if (!hScroller.isDragging()) {
-            scroll = vScroller.updateDrag(mouseX, mouseY, scroll);
+            scroll = vScroller.updateDrag(mouseX, mouseY, scroll * zoom) / zoom;
             clampScroll();
         }
         if (!vScroller.isDragging()) {
@@ -847,14 +874,27 @@ public class UiJumpTable extends UiWidget {
         }
     }
 
+    /** Briefly shows the zoom level in the corner after it changed. */
+    private void drawZoomLabel() {
+        if (Minecraft.getSystemTime() >= zoomLabelUntil) return;
+
+        String label = Math.round(zoom * 100) + "%";
+        int lw = UiDraw.width(label) + 12;
+        int lx = x + frameW() - lw - 8;
+        int ly = y + frameH() - 20;
+        UiDraw.box(lx, ly, lw, 14, UiTheme.PANEL_BG | 0xFF000000, UiTheme.CONTROL_BORDER);
+        UiDraw.text(label, lx + 6, ly + 3, UiTheme.TEXT);
+    }
+
     private void drawTooltip(int mouseX, int mouseY) {
         if (hoverRow < 0) return;
 
         Row r = rows.get(hoverRow);
         Col over = null;
+        double relX = (mouseX - bodyLeft()) / zoom; // mouse x in content units, from the body's left
         for (Col c : cols) {
-            int cx = colScreenX(c);
-            if (mouseX >= cx && mouseX < cx + c.width && (c.frozen || mouseX >= bodyLeft() + frozenW)) over = c;
+            double cx = contentX(c);
+            if (relX >= cx && relX < cx + c.width && (c.frozen || relX >= frozenW)) over = c;
         }
         if (over == null) return;
 
@@ -957,6 +997,12 @@ public class UiJumpTable extends UiWidget {
         if (!visible || !contains(mouseX, mouseY) || delta == 0) return false;
         ensureLayout();
 
+        boolean ctrl = Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL);
+        if (ctrl) {
+            zoomAt(delta > 0 ? 1 : -1, mouseX, mouseY);
+            return true;
+        }
+
         boolean shift = Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) || Keyboard.isKeyDown(Keyboard.KEY_RSHIFT);
         if (shift) {
             hScroller.scrollByWheel(delta, scrollViewW, scrollColsW);
@@ -965,6 +1011,68 @@ public class UiJumpTable extends UiWidget {
             clampScroll();
         }
         return true;
+    }
+
+    // -------------------------
+    // Zoom
+    // -------------------------
+
+    /**
+     * Zooms in (steps > 0) or out around a screen position: the point of the table under that position stays
+     * under it, so you can zoom into the part of a long sheet you are looking at.
+     */
+    public void zoomAt(int steps, int mouseX, int mouseY) {
+        ensureLayout();
+
+        float old = zoom;
+        float target = (float) (old * Math.pow(ZOOM_STEP, steps));
+        float next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, target));
+        zoomLabelUntil = Minecraft.getSystemTime() + ZOOM_LABEL_MS;
+        if (Math.abs(next - old) < 0.001f) return;
+
+        // The content point under the cursor, before the change.
+        float relY = mouseY - bodyTop();
+        float contentY = scroll + relY / old;
+        float relX = mouseX - bodyLeft();
+        boolean inScrollingPart = relX >= frozenW * old;
+        double contentXInScrollingPart = hScroller.getOffset() + relX / old - frozenW;
+
+        zoom = next;
+        layoutDirty = true;
+        ensureLayout();
+
+        // Put the same point back under the cursor.
+        scroll = contentY - relY / next;
+        clampScroll();
+        if (inScrollingPart) {
+            double offset = contentXInScrollingPart - relX / next + frozenW;
+            hScroller.setOffset(offset, scrollViewW, scrollColsW);
+        }
+    }
+
+    /** Zooms around the middle of the table (keyboard shortcuts). */
+    public void zoomCentered(int steps) {
+        zoomAt(steps, x + frameW() / 2, bodyTop() + bodyHs / 2);
+    }
+
+    /** Back to 100 % without showing the zoom label (used when the tab is shown again). */
+    public void clearZoom() {
+        if (Math.abs(zoom - 1f) < 0.001f) return;
+        zoom = 1f;
+        layoutDirty = true;
+        zoomLabelUntil = 0L;
+        scroll = 0f;
+        hScroller.setOffset(0, scrollViewW, scrollColsW);
+    }
+
+    public void resetZoom() {
+        zoomAt(0, x, y);
+        if (Math.abs(zoom - 1f) < 0.001f) return;
+        zoom = 1f;
+        layoutDirty = true;
+        zoomLabelUntil = Minecraft.getSystemTime() + ZOOM_LABEL_MS;
+        ensureLayout();
+        clampScroll();
     }
 
     /** Identity set of the jumps shown, for callers that need to know whether a jump is visible. */

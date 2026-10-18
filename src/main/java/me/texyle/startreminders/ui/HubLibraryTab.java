@@ -278,7 +278,7 @@ final class HubLibraryTab implements HubTab {
         boolean editable = !BuiltinContainers.isProtectedServer(server);
         List<Entry> entries = new ArrayList<Entry>();
         entries.add(Entry.item("Rename...", editable, () -> renameServer(server)));
-        entries.add(Entry.afterSeparator("Remove...", editable, () -> removeServer(server)));
+        entries.add(Entry.danger("Remove...", editable, () -> removeServer(server)));
 
         popup.open(serverMenuButton.x + serverMenuButton.w - 170, serverMenuButton.y + serverMenuButton.h + 2, 170, entries);
     }
@@ -335,7 +335,7 @@ final class HubLibraryTab implements HubTab {
                 () -> SheetTemplateSync.requestSheetSyncForMap(server, map, true)));
         entries.add(Entry.afterSeparator("Export template...", editable, () -> MapTemplateActions.exportMap(server, map)));
         entries.add(Entry.item("Import template...", editable, () -> MapTemplateActions.importInto(server, null)));
-        entries.add(Entry.afterSeparator("Remove map...", editable, () -> removeMap(server, map)));
+        entries.add(Entry.danger("Remove map...", editable, () -> removeMap(server, map)));
 
         popup.open(mapMenuButton.x + mapMenuButton.w - 200, mapMenuButton.y + mapMenuButton.h + 2, 200, entries);
     }

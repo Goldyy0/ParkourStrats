@@ -53,7 +53,7 @@ final class HubSectionsTab implements HubTab {
         newButton = new UiButton("+ New section", UiButton.Style.PRIMARY, this::newSection);
         syncButton = new UiButton("Sync from sheet...", UiButton.Style.SECONDARY, this::syncFromSheet);
         editButton = new UiButton("Edit", UiButton.Style.SECONDARY, this::editSection);
-        deleteButton = new UiButton("Delete", UiButton.Style.SECONDARY, this::deleteSection);
+        deleteButton = new UiButton("Delete", UiButton.Style.DANGER, this::deleteSection);
 
         widgets.add(list);
         widgets.add(newButton);

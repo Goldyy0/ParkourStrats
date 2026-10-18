@@ -305,9 +305,16 @@ public class GuiStrategyEditor extends UiScreen {
         List<Entry> entries = new ArrayList<Entry>();
         entries.add(Entry.item("Add another strategy", () ->
                 Minecraft.getMinecraft().displayGuiScreen(GuiStrategyEditor.create(parent, after))));
-        entries.add(Entry.afterSeparator("Delete this strategy...", true, this::confirmDelete));
+        entries.add(Entry.item("Back to sheet", this::backToSheet));
+        entries.add(Entry.danger("Delete this strategy...", true, this::confirmDelete));
 
         popup.open(moreButton.x, moreButton.y - entries.size() * 18 - 12, 200, entries);
+    }
+
+    /** Leaves the editor for the sheet, with the edited jump selected and scrolled into view. */
+    private void backToSheet() {
+        GuiScreen sheet = (parent instanceof GuiHub) ? parent : new GuiHub(null);
+        Minecraft.getMinecraft().displayGuiScreen(sheet);
     }
 
     private void confirmDelete() {
