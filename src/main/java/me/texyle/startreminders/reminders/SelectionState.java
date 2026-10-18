@@ -74,7 +74,7 @@ public final class SelectionState {
 		}
 	}
 
-	/** Replaces the whole selection at once without the per-level initialisation of the setters. */
+	/** Replaces the whole selection at once without the per-level initialization of the setters. */
 	public static void select(ServerProfile server, ParkourMap map, Jump jump) {
 		selectedServer = server;
 		selectedMap = map;

@@ -13,4 +13,8 @@ public class ModSettings {
     // Edit menu jump pick mode:
     // false = Nearest (default), true = In crosshair
     public boolean editPickModeInCrosshair = false;
+
+    // Jump table: sections as a narrow color stripe (name shown on hover) instead of full columns.
+    // Default is true.
+    public boolean sectionsCompact = true;
 }

@@ -1,22 +1,25 @@
 package me.texyle.startreminders.gui.hierarchy;
 
-import java.io.IOException;
-
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.util.EnumChatFormatting;
 
+import me.texyle.startreminders.ui.UiButton;
+import me.texyle.startreminders.ui.UiDraw;
+import me.texyle.startreminders.ui.UiScreen;
+import me.texyle.startreminders.ui.UiSegmented;
+import me.texyle.startreminders.ui.UiTextField;
+import me.texyle.startreminders.ui.UiTheme;
+import me.texyle.startreminders.ui.UiToggle;
 import me.texyle.startreminders.utils.ChatUtils;
 
 /**
  * Shared form for creating and editing a map: name, optional section levels (I..IV) and their names.
  * Subclasses supply the title, the initial values and what happens on submit.
  */
-abstract class GuiMapForm extends GuiScreen {
+abstract class GuiMapForm extends UiScreen {
 
-    /** Initial form values. Null {@code sectionsEnabled} / {@code sectionsCount} keep the current ones. */
+    /** Initial form values. Null {@code sectionsEnabled} / {@code sectionsCount} keep the defaults. */
     protected static final class Prefill {
         final String mapName;
         final Boolean sectionsEnabled;
@@ -31,47 +34,28 @@ abstract class GuiMapForm extends GuiScreen {
         }
     }
 
-    private static final int BTN_SUBMIT = 1;
-    private static final int BTN_CANCEL = 2;
+    private static final String[] ROMAN = { "I", "II", "III", "IV" };
+    private static final int ROW_H = 30;
+    private static final int LABEL_W = 110;
 
-    private static final int BTN_SECTIONS_TOGGLE = 10;
-    private static final int BTN_ROMAN_I = 20;
-    private static final int BTN_ROMAN_II = 21;
-    private static final int BTN_ROMAN_III = 22;
-    private static final int BTN_ROMAN_IV = 23;
-
-    // Layout constants
-    private static final int MAP_FIELD_W = 240;
-    private static final int SECTION_LABEL_W = 80;
-    private static final int SECTION_FIELD_W = 240;
-
-    private final GuiScreen parent;
-
-    private GuiTextField mapNameField;
-
+    // Form state; survives screen rebuilds (window resize).
+    private boolean initialized = false;
+    private String mapName = "";
     private boolean sectionsEnabled = false;
-    private int sectionsCount = 1; // only meaningful when enabled
+    private int sectionsCount = 1;
+    private final String[] sectionNames = new String[4];
 
-    private final GuiTextField[] sectionNameFields = new GuiTextField[4];
-
-    private GuiButton btnSubmit;
-    private GuiButton btnCancel;
-
-    private GuiButton btnSectionsToggle;
-    private GuiButton btnRomanI;
-    private GuiButton btnRomanII;
-    private GuiButton btnRomanIII;
-    private GuiButton btnRomanIV;
+    private UiTextField nameField;
+    private UiSegmented countChoice;
+    private final UiTextField[] nameFields = new UiTextField[4];
 
     GuiMapForm(GuiScreen parent) {
-        this.parent = parent;
+        super(parent);
     }
 
     // -------------------------
     // Subclass hooks
     // -------------------------
-
-    protected abstract String getTitle();
 
     protected abstract String getSubmitLabel();
 
@@ -95,182 +79,87 @@ abstract class GuiMapForm extends GuiScreen {
     // Layout
     // -------------------------
 
-    private int getBaseY() {
-        return this.height / 2 - 110;
-    }
-
-    private int getMapFieldX(int centerX) {
-        return centerX - (MAP_FIELD_W / 2);
-    }
-
-    private int getSectionFullX(int centerX) {
-        int fullW = SECTION_LABEL_W + SECTION_FIELD_W;
-        return centerX - (fullW / 2);
-    }
-
-    private int getSectionFieldX(int centerX) {
-        return getSectionFullX(centerX) + SECTION_LABEL_W;
+    @Override
+    protected int getPanelWidth() {
+        return 440;
     }
 
     @Override
-    public void initGui() {
-        super.initGui();
+    protected int getPanelHeight() {
+        return 340;
+    }
 
-        int centerX = this.width / 2;
-        int baseY = getBaseY();
-
-        int mapFieldX = getMapFieldX(centerX);
-        int sectionFieldX = getSectionFieldX(centerX);
+    private void initializeOnce() {
+        if (initialized) return;
+        initialized = true;
 
         Prefill prefill = getPrefill();
-
-        mapNameField = new GuiTextField(100, this.fontRendererObj, mapFieldX, baseY + 18, MAP_FIELD_W, 20);
-        mapNameField.setFocused(true);
-        mapNameField.setMaxStringLength(512);
-        mapNameField.setText(prefill.mapName);
-
-        if (prefill.sectionsEnabled != null) {
-            sectionsEnabled = prefill.sectionsEnabled.booleanValue();
-        }
-        if (prefill.sectionsCount != null) {
-            sectionsCount = prefill.sectionsCount.intValue();
-        }
-
+        mapName = prefill.mapName;
+        if (prefill.sectionsEnabled != null) sectionsEnabled = prefill.sectionsEnabled.booleanValue();
+        if (prefill.sectionsCount != null) sectionsCount = prefill.sectionsCount.intValue();
         for (int i = 0; i < 4; i++) {
-            sectionNameFields[i] = new GuiTextField(200 + i, this.fontRendererObj, sectionFieldX, (baseY + 74) + 30 + (i * 22), SECTION_FIELD_W, 20);
-            sectionNameFields[i].setMaxStringLength(512);
-            sectionNameFields[i].setText(prefill.sectionNames[i]);
-        }
-
-        // Toggle "Include sections" (centered like map field)
-        btnSectionsToggle = new GuiButton(BTN_SECTIONS_TOGGLE, mapFieldX, baseY + 48, MAP_FIELD_W, 20, getSectionsToggleLabel());
-
-        // Roman buttons (centered)
-        int romanSize = 28;
-        int romanGap = 6;
-        int rowW = (romanSize * 4) + (romanGap * 3);
-        int romanStartX = centerX - (rowW / 2);
-        int romanY = baseY + 74;
-
-        btnRomanI = new GuiButton(BTN_ROMAN_I, romanStartX + (romanSize + romanGap) * 0, romanY, romanSize, 20, "I");
-        btnRomanII = new GuiButton(BTN_ROMAN_II, romanStartX + (romanSize + romanGap) * 1, romanY, romanSize, 20, "II");
-        btnRomanIII = new GuiButton(BTN_ROMAN_III, romanStartX + (romanSize + romanGap) * 2, romanY, romanSize, 20, "III");
-        btnRomanIV = new GuiButton(BTN_ROMAN_IV, romanStartX + (romanSize + romanGap) * 3, romanY, romanSize, 20, "IV");
-
-        // Bottom buttons fixed
-        int buttonsY = this.height - 48;
-        btnSubmit = new GuiButton(BTN_SUBMIT, centerX - 110, buttonsY, 100, 20, getSubmitLabel());
-        btnCancel = new GuiButton(BTN_CANCEL, centerX + 10, buttonsY, 100, 20, "Cancel");
-
-        this.buttonList.add(btnSectionsToggle);
-        this.buttonList.add(btnRomanI);
-        this.buttonList.add(btnRomanII);
-        this.buttonList.add(btnRomanIII);
-        this.buttonList.add(btnRomanIV);
-
-        this.buttonList.add(btnSubmit);
-        this.buttonList.add(btnCancel);
-
-        updateControlsVisibilityAndState();
-    }
-
-    private String getSectionsToggleLabel() {
-        return (sectionsEnabled ? "[x] " : "[ ] ") + "Include sections";
-    }
-
-    private void updateControlsVisibilityAndState() {
-        btnSectionsToggle.displayString = getSectionsToggleLabel();
-
-        boolean enabled = sectionsEnabled;
-
-        // Highlight selected count by disabling that button (simple visual cue)
-        btnRomanI.enabled = enabled && sectionsCount != 1;
-        btnRomanII.enabled = enabled && sectionsCount != 2;
-        btnRomanIII.enabled = enabled && sectionsCount != 3;
-        btnRomanIV.enabled = enabled && sectionsCount != 4;
-
-        for (int i = 0; i < 4; i++) {
-            sectionNameFields[i].setVisible(enabled && i < sectionsCount);
+            sectionNames[i] = prefill.sectionNames[i];
         }
     }
 
     @Override
-    public void drawScreen(int mouseX, int mouseY, float partialTicks) {
-        this.drawDefaultBackground();
+    protected void build(int x, int y, int w, int h) {
+        initializeOnce();
 
-        int centerX = this.width / 2;
-        int baseY = getBaseY();
+        int fieldX = x + LABEL_W;
+        int fieldW = w - LABEL_W;
+        int rowY = y + 2;
 
-        int mapFieldX = getMapFieldX(centerX);
-        int sectionFullX = getSectionFullX(centerX);
+        nameField = add(new UiTextField(mapName, 512).placeholder("Map name").onChange(t -> mapName = t), fieldX, rowY, fieldW, 20);
+        nameField.setFocused(true);
+        rowY += ROW_H;
 
-        this.drawCenteredString(this.fontRendererObj, getTitle(), centerX, baseY - 12, 0xFFFFFF);
+        add(new UiToggle(sectionsEnabled, on -> sectionsEnabled = on.booleanValue()), fieldX, rowY + 2, 32, 16);
+        rowY += ROW_H;
 
-        // Map name label + centered field
-        this.fontRendererObj.drawString("Map name:", mapFieldX, baseY + 6, 0xFFFFFF, true);
-        mapNameField.drawTextBox();
+        countChoice = new UiSegmented(ROMAN, sectionsCount - 1, index -> sectionsCount = index + 1);
+        add(countChoice, fieldX, rowY + 1, countChoice.preferredWidth(), 18);
+        rowY += ROW_H;
 
-        // Section labels + fields (same row)
+        for (int i = 0; i < 4; i++) {
+            final int index = i;
+            nameFields[i] = add(new UiTextField(sectionNames[i], 512).onChange(t -> sectionNames[index] = t),
+                    fieldX, rowY, fieldW, 20);
+            rowY += 28;
+        }
+
+        addFooter(
+                new UiButton("Cancel", UiButton.Style.SECONDARY, this::onBack),
+                new UiButton(getSubmitLabel(), UiButton.Style.PRIMARY, this::onSubmit));
+    }
+
+    @Override
+    protected void drawContent(int mouseX, int mouseY, float partialTicks) {
+        countChoice.visible = sectionsEnabled;
+        for (int i = 0; i < 4; i++) {
+            nameFields[i].visible = sectionsEnabled && i < sectionsCount;
+        }
+
+        int rowY = contentY + 2;
+        UiDraw.text("MAP NAME", contentX, rowY + 6, UiTheme.TEXT_MUTED);
+        rowY += ROW_H;
+        UiDraw.text("SECTIONS", contentX, rowY + 5, UiTheme.TEXT_MUTED);
+        UiDraw.text(sectionsEnabled ? "On" : "Off", contentX + LABEL_W + 40, rowY + 5, UiTheme.TEXT);
+        rowY += ROW_H;
+
         if (sectionsEnabled) {
-            int romanY = baseY + 74;
-            int fieldStartY = romanY + 30;
-            int labelX = sectionFullX;
-
+            UiDraw.text("LEVELS", contentX, rowY + 5, UiTheme.TEXT_MUTED);
+            rowY += ROW_H;
             for (int i = 0; i < sectionsCount; i++) {
-                String label = "Section " + (i + 1) + ":";
-                int y = fieldStartY + (i * 22);
-
-                this.fontRendererObj.drawString(label, labelX, y + 6, 0xFFFFFF, true);
-                sectionNameFields[i].drawTextBox();
+                UiDraw.text("LEVEL " + ROMAN[i], contentX, rowY + 6, UiTheme.TEXT_MUTED);
+                rowY += 28;
             }
         }
-
-        super.drawScreen(mouseX, mouseY, partialTicks);
     }
 
     // -------------------------
-    // Input
+    // Submit
     // -------------------------
-
-    @Override
-    protected void actionPerformed(GuiButton button) throws IOException {
-        if (button == null) return;
-
-        switch (button.id) {
-            case BTN_CANCEL:
-                Minecraft.getMinecraft().displayGuiScreen(parent);
-                return;
-            case BTN_SECTIONS_TOGGLE:
-                sectionsEnabled = !sectionsEnabled;
-                if (!sectionsEnabled) {
-                    sectionsCount = 1; // reset for next time
-                }
-                updateControlsVisibilityAndState();
-                return;
-            case BTN_ROMAN_I:
-                setSectionsCount(1);
-                return;
-            case BTN_ROMAN_II:
-                setSectionsCount(2);
-                return;
-            case BTN_ROMAN_III:
-                setSectionsCount(3);
-                return;
-            case BTN_ROMAN_IV:
-                setSectionsCount(4);
-                return;
-            case BTN_SUBMIT:
-                onSubmit();
-                return;
-            default:
-                break;
-        }
-    }
-
-    private void setSectionsCount(int count) {
-        sectionsCount = count;
-        updateControlsVisibilityAndState();
-    }
 
     private void onSubmit() {
         String contextError = getContextError();
@@ -279,7 +168,7 @@ abstract class GuiMapForm extends GuiScreen {
             return;
         }
 
-        String name = (mapNameField.getText() != null) ? mapNameField.getText().trim() : "";
+        String name = mapName != null ? mapName.trim() : "";
         if (name.length() == 0) {
             sendError("Map name cannot be empty.");
             return;
@@ -292,7 +181,7 @@ abstract class GuiMapForm extends GuiScreen {
             countToSave = sectionsCount;
             names = new String[4];
             for (int i = 0; i < 4; i++) {
-                String v = sectionNameFields[i].getText();
+                String v = sectionNames[i];
                 names[i] = (v != null) ? v.trim() : "";
             }
         }
@@ -310,52 +199,7 @@ abstract class GuiMapForm extends GuiScreen {
     }
 
     @Override
-    protected void keyTyped(char typedChar, int keyCode) throws IOException {
-        // Esc
-        if (keyCode == 1) {
-            Minecraft.getMinecraft().displayGuiScreen(parent);
-            return;
-        }
-
-        mapNameField.textboxKeyTyped(typedChar, keyCode);
-
-        if (sectionsEnabled) {
-            for (int i = 0; i < sectionsCount; i++) {
-                sectionNameFields[i].textboxKeyTyped(typedChar, keyCode);
-            }
-        }
-
-        // Enter
-        if (keyCode == 28) {
-            actionPerformed(btnSubmit);
-            return;
-        }
-
-        super.keyTyped(typedChar, keyCode);
-    }
-
-    @Override
-    protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
-        mapNameField.mouseClicked(mouseX, mouseY, mouseButton);
-
-        if (sectionsEnabled) {
-            for (int i = 0; i < sectionsCount; i++) {
-                sectionNameFields[i].mouseClicked(mouseX, mouseY, mouseButton);
-            }
-        }
-
-        super.mouseClicked(mouseX, mouseY, mouseButton);
-    }
-
-    @Override
-    public void updateScreen() {
-        super.updateScreen();
-        mapNameField.updateCursorCounter();
-
-        if (sectionsEnabled) {
-            for (int i = 0; i < sectionsCount; i++) {
-                sectionNameFields[i].updateCursorCounter();
-            }
-        }
+    protected void onEnter() {
+        onSubmit();
     }
 }

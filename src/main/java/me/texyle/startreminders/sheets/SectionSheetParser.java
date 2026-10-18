@@ -12,7 +12,7 @@ import me.texyle.startreminders.data.Jump;
 import me.texyle.startreminders.data.MapSection;
 import me.texyle.startreminders.data.ParkourMap;
 
-/** Turns the Apps Script JSON of a sheet (cell values and background colours) into the sections of a map. */
+/** Turns the Apps Script JSON of a sheet (cell values and background colors) into the sections of a map. */
 public final class SectionSheetParser {
 
 	private SectionSheetParser() {}

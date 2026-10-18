@@ -20,7 +20,7 @@ import me.texyle.startreminders.sheets.SheetJumpResolver.TemplateIndexContext;
 import me.texyle.startreminders.sheets.SheetSyncManager;
 import me.texyle.startreminders.utils.ChatUtils;
 
-/** Synchronises a map's jumps and strategies with a Google Sheet exported as CSV. */
+/** Synchronizes a map's jumps and strategies with a Google Sheet exported as CSV. */
 public final class SheetTemplateSync {
 
 	private SheetTemplateSync() {}

@@ -20,6 +20,16 @@ public final class UserPreferences {
 		SettingsRepository.save();
 	}
 
+	/** True: sections are narrow color stripes in the jump table; false: full-width columns with names. */
+	public static boolean isSectionsCompact() {
+		return SettingsRepository.get().sectionsCompact;
+	}
+
+	public static void setSectionsCompact(boolean compact) {
+		SettingsRepository.get().sectionsCompact = compact;
+		SettingsRepository.save();
+	}
+
 	public static boolean isGlobalShowJumpNameEnabled() {
 		return SettingsRepository.get().showJumpNameInWorld;
 	}

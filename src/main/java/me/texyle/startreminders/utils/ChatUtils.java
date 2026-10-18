@@ -7,7 +7,7 @@ import net.minecraft.util.EnumChatFormatting;
 /** Chat output helpers and the mod's chat prefixes. */
 public final class ChatUtils {
 
-	/** Prefixes for chat lines the mod prints; the colour after the tag shows severity. */
+	/** Prefixes for chat lines the mod prints; the color after the tag shows severity. */
 	public static final String INFO_PREFIX = EnumChatFormatting.DARK_AQUA + "[ParkourStrats] " + EnumChatFormatting.AQUA;
 	public static final String WARNING_PREFIX = EnumChatFormatting.DARK_AQUA + "[ParkourStrats] " + EnumChatFormatting.YELLOW;
 	public static final String ERROR_PREFIX = EnumChatFormatting.DARK_AQUA + "[ParkourStrats] " + EnumChatFormatting.RED;

@@ -10,7 +10,7 @@ public final class GuiDraw {
 
     private GuiDraw() {}
 
-    /** Fills a rectangle with an ARGB colour. Coordinates may be given in any order. */
+    /** Fills a rectangle with an ARGB color. Coordinates may be given in any order. */
     public static void fillRect(int left, int top, int right, int bottom, int color) {
         if (left > right) {
             int tmp = left;

@@ -7,9 +7,9 @@ import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.InputEvent;
 
 import me.texyle.startreminders.StratReminders;
-import me.texyle.startreminders.gui.hierarchy.GuiServerList;
 import me.texyle.startreminders.render.NearbyJumpRenderer;
 import me.texyle.startreminders.services.StrategyService;
+import me.texyle.startreminders.ui.GuiHub;
 import me.texyle.startreminders.utils.ChatUtils;
 
 /** Reacts to the mod's key bindings. */
@@ -26,7 +26,7 @@ public class KeyInputHandler {
 		}
 
 		if (StratReminders.hierarchyKey.isKeyDown()) {
-			Minecraft.getMinecraft().displayGuiScreen(new GuiServerList(null));
+			Minecraft.getMinecraft().displayGuiScreen(new GuiHub(null));
 			return;
 		}
 
