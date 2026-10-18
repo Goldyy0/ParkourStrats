@@ -2,6 +2,11 @@ package me.texyle.startreminders.gui;
 
 import java.io.IOException;
 
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiButton;
+import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.util.EnumChatFormatting;
+
 import me.texyle.startreminders.data.Jump;
 import me.texyle.startreminders.data.MapSection;
 import me.texyle.startreminders.data.ParkourMap;
@@ -10,17 +15,21 @@ import me.texyle.startreminders.gui.hierarchy.GuiJumpList;
 import me.texyle.startreminders.gui.hierarchy.GuiMapList;
 import me.texyle.startreminders.gui.hierarchy.GuiPickSectionPreview;
 import me.texyle.startreminders.gui.hierarchy.GuiServerList;
-import me.texyle.startreminders.reminders.ReminderManager;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiButton;
-import net.minecraft.client.gui.GuiScreen;
-import net.minecraft.util.ChatComponentText;
-import net.minecraft.util.EnumChatFormatting;
+import me.texyle.startreminders.persistence.BuiltinContainers;
+import me.texyle.startreminders.services.JumpService;
+import me.texyle.startreminders.utils.ChatUtils;
 
 public class GuiTransferJump extends GuiScreen {
 
     private static final int FIELD_WIDTH = 220;
     private static final int COLOR_TEXT = 0xFFFFFF;
+
+    // Button IDs
+    private static final int BTN_BACK = 20;
+    private static final int BTN_TRANSFER = 5;
+    private static final int BTN_PICK_SERVER = 6;
+    private static final int BTN_PICK_MAP = 7;
+    private static final int BTN_PICK_SECTION = 8;
 
     private final GuiScreen parent;
     private final ParkourMap fromMap;
@@ -54,10 +63,10 @@ public class GuiTransferJump extends GuiScreen {
 
         int yBase = this.height / 3;
 
-        backButton = new GuiButton(20, 8, 8, 60, 20, "Back");
+        backButton = new GuiButton(BTN_BACK, 8, 8, 60, 20, "Back");
         this.buttonList.add(backButton);
 
-        transferButton = new GuiButton(5, 0, 0, "Transfer");
+        transferButton = new GuiButton(BTN_TRANSFER, 0, 0, "Transfer");
         transferButton.xPosition = (this.width - transferButton.width) / 2;
         transferButton.yPosition = this.height - 28;
         this.buttonList.add(transferButton);
@@ -70,13 +79,13 @@ public class GuiTransferJump extends GuiScreen {
 
         int fieldX = getFieldX();
 
-        pickServerButton = new GuiButton(6, fieldX, btnRow1Y, 110, 20, "Select server");
+        pickServerButton = new GuiButton(BTN_PICK_SERVER, fieldX, btnRow1Y, 110, 20, "Select server");
         this.buttonList.add(pickServerButton);
 
-        pickMapButton = new GuiButton(7, fieldX + 110, btnRow1Y, 110, 20, "Select map");
+        pickMapButton = new GuiButton(BTN_PICK_MAP, fieldX + 110, btnRow1Y, 110, 20, "Select map");
         this.buttonList.add(pickMapButton);
 
-        pickSectionButton = new GuiButton(8, fieldX, btnRow2Y, FIELD_WIDTH, 20, "Select section");
+        pickSectionButton = new GuiButton(BTN_PICK_SECTION, fieldX, btnRow2Y, FIELD_WIDTH, 20, "Select section");
         this.buttonList.add(pickSectionButton);
 
         updateButtonStates();
@@ -97,8 +106,8 @@ public class GuiTransferJump extends GuiScreen {
                 EnumChatFormatting.AQUA + "Jump: " + EnumChatFormatting.YELLOW + jumpLabel,
                 this.width / 2, yBase - 10, COLOR_TEXT);
 
-        boolean isGlobal = (selectedServer != null && ReminderManager.isGlobalServer(selectedServer));
-        boolean isRestored = (selectedServer != null && ReminderManager.isRestoredServer(selectedServer));
+        boolean isGlobal = (selectedServer != null && BuiltinContainers.isGlobalServer(selectedServer));
+        boolean isRestored = (selectedServer != null && BuiltinContainers.isRestoredServer(selectedServer));
 
         // ------------------------------------------------------------
         // Text fields BELOW the buttons (per your request)
@@ -112,7 +121,7 @@ public class GuiTransferJump extends GuiScreen {
 
         String mapText;
         if (isGlobal) {
-            ParkourMap gm = ReminderManager.getGlobalMap();
+            ParkourMap gm = BuiltinContainers.getGlobalMap();
             mapText = (gm != null && gm.getId() != null) ? gm.getId() : "<Global>";
         } else if (selectedMap != null && selectedMap.getId() != null) {
             mapText = selectedMap.getId();
@@ -159,227 +168,203 @@ public class GuiTransferJump extends GuiScreen {
     protected void actionPerformed(GuiButton button) throws IOException {
         if (button == null) return;
 
-        if (button.id == 20) {
-            goBack();
+        switch (button.id) {
+            case BTN_BACK:
+                goBack();
+                return;
+            case BTN_PICK_SERVER:
+                onPickServer();
+                return;
+            case BTN_PICK_MAP:
+                onPickMap();
+                return;
+            case BTN_PICK_SECTION:
+                onPickSection();
+                return;
+            case BTN_TRANSFER:
+                onTransfer();
+                return;
+            default:
+                super.actionPerformed(button);
+        }
+    }
+
+    private void clearSection() {
+        selectedSectionLevelOneBased = 0;
+        selectedSection = null;
+    }
+
+    /** Reports a problem under the form and refreshes the buttons. */
+    private void fail(String message) {
+        errorText = message;
+        updateButtonStates();
+    }
+
+    /** Global and RestoredStrats have one fixed map each; for other servers this is the picked map. */
+    private ParkourMap getTargetMap() {
+        if (BuiltinContainers.isProtectedServer(selectedServer)) {
+            return BuiltinContainers.getForcedMap(selectedServer);
+        }
+        return selectedMap;
+    }
+
+    private void onPickServer() {
+        Minecraft.getMinecraft().displayGuiScreen(
+                new GuiServerList(this, server -> {
+                    selectedServer = server;
+
+                    // Reset section on server change
+                    clearSection();
+
+                    // Global / Restored force their own map; otherwise the map must be picked again
+                    selectedMap = BuiltinContainers.getForcedMap(selectedServer);
+
+                    errorText = "";
+                    updateButtonStates();
+                }, false)
+        );
+    }
+
+    private void onPickMap() {
+        if (selectedServer == null) {
+            fail("Select a server first.");
             return;
         }
 
-        if (button.id == 6) {
-            Minecraft.getMinecraft().displayGuiScreen(
-                    new GuiServerList(this, server -> {
-                        selectedServer = server;
+        if (BuiltinContainers.isProtectedServer(selectedServer)) {
+            // Map is forced; no picker
+            selectedMap = BuiltinContainers.getForcedMap(selectedServer);
+            clearSection();
 
-                        boolean isGlobal = (selectedServer != null && ReminderManager.isGlobalServer(selectedServer));
-                        boolean isRestored = (selectedServer != null && ReminderManager.isRestoredServer(selectedServer));
+            errorText = "";
+            updateButtonStates();
+            return;
+        }
 
-                        // Reset section on server change
-                        selectedSectionLevelOneBased = 0;
-                        selectedSection = null;
+        Minecraft.getMinecraft().displayGuiScreen(
+                new GuiMapList(this, selectedServer, map -> {
+                    selectedMap = map;
 
-                        if (isGlobal) {
-                            // Global is allowed: force global map, no sections
-                            selectedMap = ReminderManager.getGlobalMap();
-                        } else if (isRestored) {
-                            // Restored forced map
-                            selectedMap = ReminderManager.getRestoredMap();
-                        } else {
-                            selectedMap = null;
-                        }
+                    // Reset section on map change
+                    clearSection();
+
+                    errorText = "";
+                    updateButtonStates();
+                })
+        );
+    }
+
+    private void onPickSection() {
+        if (selectedServer == null) {
+            fail("Select a server first.");
+            return;
+        }
+
+        if (BuiltinContainers.isGlobalServer(selectedServer)) {
+            clearSection();
+            fail("Global has no sections.");
+            return;
+        }
+
+        if (BuiltinContainers.isRestoredServer(selectedServer)) {
+            clearSection();
+            fail("Restored has no sections.");
+            return;
+        }
+
+        if (selectedMap == null) {
+            fail("Select a map first.");
+            return;
+        }
+
+        Minecraft.getMinecraft().displayGuiScreen(
+                new GuiPickSectionPreview(this, selectedMap, new GuiPickSectionPreview.ISectionPickHandler() {
+                    @Override
+                    public void onPick(int levelOneBased, MapSection section) {
+                        selectedSectionLevelOneBased = levelOneBased;
+                        selectedSection = section;
 
                         errorText = "";
                         updateButtonStates();
-                    }, false)
-            );
+                    }
+                })
+        );
+    }
+
+    private void onTransfer() {
+        if (jumpToMove == null || fromMap == null) {
+            fail("Invalid source jump.");
             return;
         }
 
-        if (button.id == 7) {
-            if (selectedServer == null) {
-                errorText = "Select a server first.";
-                updateButtonStates();
-                return;
-            }
-
-            if (ReminderManager.isGlobalServer(selectedServer)) {
-                // Global map is forced; no picker
-                selectedMap = ReminderManager.getGlobalMap();
-                selectedSectionLevelOneBased = 0;
-                selectedSection = null;
-
-                errorText = "";
-                updateButtonStates();
-                return;
-            }
-
-            if (ReminderManager.isRestoredServer(selectedServer)) {
-                selectedMap = ReminderManager.getRestoredMap();
-                selectedSectionLevelOneBased = 0;
-                selectedSection = null;
-
-                errorText = "";
-                updateButtonStates();
-                return;
-            }
-
-            Minecraft.getMinecraft().displayGuiScreen(
-                    new GuiMapList(this, selectedServer, map -> {
-                        selectedMap = map;
-
-                        // Reset section on map change
-                        selectedSectionLevelOneBased = 0;
-                        selectedSection = null;
-
-                        errorText = "";
-                        updateButtonStates();
-                    })
-            );
+        if (selectedServer == null) {
+            fail("Select a server first.");
             return;
         }
 
-        if (button.id == 8) {
-            if (selectedServer == null) {
-                errorText = "Select a server first.";
-                updateButtonStates();
-                return;
-            }
+        boolean isProtected = BuiltinContainers.isProtectedServer(selectedServer);
 
-            if (ReminderManager.isGlobalServer(selectedServer)) {
-                // Global has no sections
-                selectedSectionLevelOneBased = 0;
-                selectedSection = null;
+        ParkourMap targetMap = getTargetMap();
 
-                errorText = "Global has no sections.";
-                updateButtonStates();
-                return;
-            }
-
-            if (ReminderManager.isRestoredServer(selectedServer)) {
-                selectedSectionLevelOneBased = 0;
-                selectedSection = null;
-
-                errorText = "Restored has no sections.";
-                updateButtonStates();
-                return;
-            }
-
-            if (selectedMap == null) {
-                errorText = "Select a map first.";
-                updateButtonStates();
-                return;
-            }
-
-            Minecraft.getMinecraft().displayGuiScreen(
-                    new GuiPickSectionPreview(this, selectedMap, new GuiPickSectionPreview.ISectionPickHandler() {
-                        @Override
-                        public void onPick(int levelOneBased, MapSection section) {
-                            selectedSectionLevelOneBased = levelOneBased;
-                            selectedSection = section;
-
-                            errorText = "";
-                            updateButtonStates();
-                        }
-                    })
-            );
+        if (targetMap == null) {
+            fail("Select a map first.");
             return;
         }
 
-        if (button.id == 5) {
-            if (jumpToMove == null || fromMap == null) {
-                errorText = "Invalid source jump.";
-                updateButtonStates();
-                return;
-            }
-
-            if (selectedServer == null) {
-                errorText = "Select a server first.";
-                updateButtonStates();
-                return;
-            }
-
-            boolean isGlobal = ReminderManager.isGlobalServer(selectedServer);
-            boolean isRestored = ReminderManager.isRestoredServer(selectedServer);
-
-            ParkourMap targetMap;
-            if (isGlobal) {
-                targetMap = ReminderManager.getGlobalMap();
-            } else if (isRestored) {
-                targetMap = ReminderManager.getRestoredMap();
-            } else {
-                targetMap = selectedMap;
-            }
-
-            if (targetMap == null) {
-                errorText = "Select a map first.";
-                updateButtonStates();
-                return;
-            }
-
-            if (targetMap == fromMap) {
-                errorText = "Target map must be different.";
-                updateButtonStates();
-                return;
-            }
-
-            int targetSectionLevel = (isGlobal || isRestored) ? 0 : selectedSectionLevelOneBased;
-            MapSection targetSection = (isGlobal || isRestored) ? null : selectedSection;
-
-            boolean ok = ReminderManager.transferJump(
-                    fromMap,
-                    jumpToMove,
-                    selectedServer,
-                    targetMap,
-                    targetSectionLevel,
-                    targetSection
-            );
-
-            if (!ok) {
-                errorText = "Transfer failed.";
-                updateButtonStates();
-                return;
-            }
-
-            String target = EnumChatFormatting.YELLOW + selectedServer.getId()
-                    + EnumChatFormatting.AQUA + " / " + EnumChatFormatting.YELLOW + targetMap.getId();
-
-            if (!isGlobal && !isRestored && targetSection != null) {
-                String sn = targetSection.getName() != null ? targetSection.getName() : "<unnamed>";
-                target += EnumChatFormatting.AQUA + " / " + EnumChatFormatting.YELLOW + "L" + targetSectionLevel + ": " + sn;
-            }
-
-            sendClientChat(EnumChatFormatting.DARK_AQUA + "[ParkourStrats] " + EnumChatFormatting.AQUA
-                    + "Jump transferred to " + target);
-
-            Minecraft.getMinecraft().displayGuiScreen(new GuiJumpList(parent, targetMap, jumpToMove));
+        if (targetMap == fromMap) {
+            fail("Target map must be different.");
             return;
         }
 
-        super.actionPerformed(button);
+        int targetSectionLevel = isProtected ? 0 : selectedSectionLevelOneBased;
+        MapSection targetSection = isProtected ? null : selectedSection;
+
+        boolean ok = JumpService.transferJump(
+                fromMap,
+                jumpToMove,
+                selectedServer,
+                targetMap,
+                targetSectionLevel,
+                targetSection
+        );
+
+        if (!ok) {
+            fail("Transfer failed.");
+            return;
+        }
+
+        String target = EnumChatFormatting.YELLOW + selectedServer.getId()
+                + EnumChatFormatting.AQUA + " / " + EnumChatFormatting.YELLOW + targetMap.getId();
+
+        if (!isProtected && targetSection != null) {
+            String sn = targetSection.getName() != null ? targetSection.getName() : "<unnamed>";
+            target += EnumChatFormatting.AQUA + " / " + EnumChatFormatting.YELLOW + "L" + targetSectionLevel + ": " + sn;
+        }
+
+        ChatUtils.info("Jump transferred to " + target);
+
+        Minecraft.getMinecraft().displayGuiScreen(new GuiJumpList(parent, targetMap, jumpToMove));
     }
 
     private void updateButtonStates() {
         boolean serverSelected = (selectedServer != null);
-        boolean isGlobal = (selectedServer != null && ReminderManager.isGlobalServer(selectedServer));
-        boolean isRestored = (selectedServer != null && ReminderManager.isRestoredServer(selectedServer));
+        boolean isGlobal = BuiltinContainers.isGlobalServer(selectedServer);
+        boolean isProtected = BuiltinContainers.isProtectedServer(selectedServer);
 
         // Keep forced maps consistent
-        if (isGlobal) {
-            selectedMap = ReminderManager.getGlobalMap();
-            selectedSectionLevelOneBased = 0;
-            selectedSection = null;
-        } else if (isRestored) {
-            selectedMap = ReminderManager.getRestoredMap();
-            selectedSectionLevelOneBased = 0;
-            selectedSection = null;
+        if (isProtected) {
+            selectedMap = BuiltinContainers.getForcedMap(selectedServer);
+            clearSection();
         }
 
         if (pickMapButton != null) {
-            pickMapButton.enabled = serverSelected && !isGlobal && !isRestored;
+            pickMapButton.enabled = serverSelected && !isProtected;
         }
 
         if (pickSectionButton != null) {
-            pickSectionButton.enabled = (selectedServer != null && !isGlobal && !isRestored && selectedMap != null);
+            pickSectionButton.enabled = (serverSelected && !isProtected && selectedMap != null);
 
-            if (isGlobal || isRestored) {
+            if (isProtected) {
                 pickSectionButton.displayString = "Select section (N/A)";
             } else if (selectedMap == null) {
                 pickSectionButton.displayString = "Select section";
@@ -391,16 +376,9 @@ public class GuiTransferJump extends GuiScreen {
             }
         }
 
-        ParkourMap targetMap = null;
-        if (isGlobal) {
-            targetMap = ReminderManager.getGlobalMap();
-        } else if (isRestored) {
-            targetMap = ReminderManager.getRestoredMap();
-        } else {
-            targetMap = selectedMap;
-        }
+        ParkourMap targetMap = getTargetMap();
 
-        boolean ok = (selectedServer != null && fromMap != null && targetMap != null && targetMap != fromMap);
+        boolean ok = (serverSelected && fromMap != null && targetMap != null && targetMap != fromMap);
 
         if (transferButton != null) {
             transferButton.enabled = ok;
@@ -413,12 +391,6 @@ public class GuiTransferJump extends GuiScreen {
         } else {
             Minecraft.getMinecraft().displayGuiScreen(null);
         }
-    }
-
-    private void sendClientChat(String msg) {
-        Minecraft mc = Minecraft.getMinecraft();
-        if (mc == null || mc.thePlayer == null || msg == null) return;
-        mc.thePlayer.addChatMessage(new ChatComponentText(msg));
     }
 
     @Override

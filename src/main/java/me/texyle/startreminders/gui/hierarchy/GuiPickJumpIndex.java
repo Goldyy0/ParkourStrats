@@ -3,20 +3,19 @@ package me.texyle.startreminders.gui.hierarchy;
 import java.io.IOException;
 import java.util.ArrayList;
 
-import me.texyle.startreminders.data.Jump;
-import me.texyle.startreminders.data.ParkourMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiSlot;
-import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.Tessellator;
-import net.minecraft.client.renderer.WorldRenderer;
-import net.minecraft.client.renderer.vertex.DefaultVertexFormats;
 import net.minecraft.util.EnumChatFormatting;
-import org.lwjgl.opengl.GL11;
+
+import me.texyle.startreminders.data.Jump;
+import me.texyle.startreminders.data.ParkourMap;
+import me.texyle.startreminders.gui.GuiDraw;
+import me.texyle.startreminders.gui.GuiScissor;
 
 public class GuiPickJumpIndex extends GuiScreen {
 
@@ -105,7 +104,7 @@ public class GuiPickJumpIndex extends GuiScreen {
         }
 
         // Ensure no scissor leaks
-        GL11.glDisable(GL11.GL_SCISSOR_TEST);
+        GuiScissor.disable();
 
         super.drawScreen(mouseX, mouseY, partialTicks);
     }
@@ -173,10 +172,6 @@ public class GuiPickJumpIndex extends GuiScreen {
 
         // Selection
         private int selectedIndex = -1;
-
-        // Custom vertical scrollbar skin colors (match other hierarchy lists)
-        private static final int COLOR_SCROLLBAR_BG = 0x44000000;
-        private static final int COLOR_SCROLLBAR_THUMB = 0xAA6666FF;
 
         // Row visuals
         private static final int COLOR_GRID_THIN = 0x442A2A2A;
@@ -268,7 +263,7 @@ public class GuiPickJumpIndex extends GuiScreen {
             try {
                 super.drawScreen(mouseX, mouseY, partialTicks);
             } finally {
-                GL11.glDisable(GL11.GL_SCISSOR_TEST);
+                GuiScissor.disable();
             }
 
             coverVanillaVerticalScrollbar();
@@ -277,24 +272,8 @@ public class GuiPickJumpIndex extends GuiScreen {
 
         private void enableScissorForViewport() {
             int x = (panelRight > panelLeft) ? panelLeft : 0;
-            int y = slotTop;
             int w = (panelRight > panelLeft) ? (panelRight - panelLeft) : this.width;
-            int h = Math.max(0, slotBottom - slotTop);
-
-            if (w <= 0 || h <= 0) {
-                return;
-            }
-
-            ScaledResolution sr = new ScaledResolution(this.mc);
-            int scale = sr.getScaleFactor();
-
-            int scX = x * scale;
-            int scY = (sr.getScaledHeight() - (y + h)) * scale;
-            int scW = w * scale;
-            int scH = h * scale;
-
-            GL11.glEnable(GL11.GL_SCISSOR_TEST);
-            GL11.glScissor(scX, scY, scW, scH);
+            GuiScissor.enable(this.mc, x, slotTop, w, Math.max(0, slotBottom - slotTop));
         }
 
         private int getViewportTop() {
@@ -327,7 +306,7 @@ public class GuiPickJumpIndex extends GuiScreen {
 
             GlStateManager.disableTexture2D();
             GlStateManager.enableBlend();
-            drawRectLocal(barLeft, getViewportTop(), barRight, getViewportBottom(), 0xFF101010);
+            GuiDraw.fillRect(barLeft, getViewportTop(), barRight, getViewportBottom(), 0xFF101010);
         }
 
         private void drawVerticalScrollbarSkin() {
@@ -356,8 +335,8 @@ public class GuiPickJumpIndex extends GuiScreen {
 
             int thumbY = barTop + (int) Math.round(t * trackH);
 
-            drawRectLocal(barLeft, barTop, barRight, barBottom, COLOR_SCROLLBAR_BG);
-            drawRectLocal(barLeft, thumbY, barRight, thumbY + thumbH, COLOR_SCROLLBAR_THUMB);
+            GuiDraw.fillRect(barLeft, barTop, barRight, barBottom, ScrollbarSkin.BACKGROUND);
+            GuiDraw.fillRect(barLeft, thumbY, barRight, thumbY + thumbH, ScrollbarSkin.THUMB);
         }
 
         @Override
@@ -391,40 +370,5 @@ public class GuiPickJumpIndex extends GuiScreen {
             drawRect(left, bottom - 1, right, bottom, COLOR_GRID_THIN);
         }
 
-        private static void drawRectLocal(int left, int top, int right, int bottom, int color) {
-            if (left > right) {
-                int tmp = left;
-                left = right;
-                right = tmp;
-            }
-            if (top > bottom) {
-                int tmp = top;
-                top = bottom;
-                bottom = tmp;
-            }
-
-            float a = (color >> 24 & 255) / 255.0F;
-            float r = (color >> 16 & 255) / 255.0F;
-            float g = (color >> 8 & 255) / 255.0F;
-            float b = (color & 255) / 255.0F;
-
-            Tessellator tessellator = Tessellator.getInstance();
-            WorldRenderer wr = tessellator.getWorldRenderer();
-
-            GlStateManager.enableBlend();
-            GlStateManager.disableTexture2D();
-            GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0);
-            GlStateManager.color(r, g, b, a);
-
-            wr.begin(7, DefaultVertexFormats.POSITION);
-            wr.pos(left, bottom, 0).endVertex();
-            wr.pos(right, bottom, 0).endVertex();
-            wr.pos(right, top, 0).endVertex();
-            wr.pos(left, top, 0).endVertex();
-            tessellator.draw();
-
-            GlStateManager.enableTexture2D();
-            GlStateManager.disableBlend();
-        }
     }
 }

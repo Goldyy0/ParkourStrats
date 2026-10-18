@@ -3,11 +3,12 @@ package me.texyle.startreminders.gui.hierarchy;
 import java.io.IOException;
 import java.util.ArrayList;
 
-import me.texyle.startreminders.data.MapSection;
-import me.texyle.startreminders.data.ParkourMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
+
+import me.texyle.startreminders.data.MapSection;
+import me.texyle.startreminders.data.ParkourMap;
 
 public class GuiPickSectionPreview extends GuiScreen {
 

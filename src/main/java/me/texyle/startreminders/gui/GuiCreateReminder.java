@@ -3,11 +3,6 @@ package me.texyle.startreminders.gui;
 import java.io.IOException;
 import java.util.ArrayList;
 
-import me.texyle.startreminders.data.Jump;
-import me.texyle.startreminders.data.ParkourMap;
-import me.texyle.startreminders.data.ServerProfile;
-import me.texyle.startreminders.gui.hierarchy.GuiJumpList;
-import me.texyle.startreminders.reminders.ReminderManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.client.gui.FontRenderer;
@@ -18,14 +13,18 @@ import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.util.EnumChatFormatting;
 import net.minecraft.util.ResourceLocation;
 
+import me.texyle.startreminders.data.Jump;
+import me.texyle.startreminders.data.ParkourMap;
+import me.texyle.startreminders.gui.hierarchy.GuiJumpList;
+import me.texyle.startreminders.reminders.SelectionState;
+import me.texyle.startreminders.services.JumpService;
+import me.texyle.startreminders.services.StrategyService;
+
 public class GuiCreateReminder extends GuiScreen {
 
 	protected static final int FIELD_WIDTH = 220;
 
 	private static final int COLOR_TEXT = 0xFFFFFF;
-	private static final int COLOR_INVALID_OVERLAY = 0x55FF0000;
-
-	private static final String RESTORED_ID = "RestoredStrats";
 
 	// New: "use player coords" icon button
 	protected static final int BTN_USE_PLAYER_COORDS = 30;
@@ -110,7 +109,7 @@ public class GuiCreateReminder extends GuiScreen {
 
 		drawTitle();
 
-		if (isRestoredContext()) {
+		if (SelectionState.isRestoredContext()) {
 			drawLegacyLayout();
 		} else {
 			drawNewLayout();
@@ -119,7 +118,7 @@ public class GuiCreateReminder extends GuiScreen {
 		drawValidationOverlays();
 
 		// Draw fields for the active layout only
-		if (isRestoredContext()) {
+		if (SelectionState.isRestoredContext()) {
 			textLine1.drawTextBox();
 			textLine2.drawTextBox();
 			textLine3.drawTextBox();
@@ -157,7 +156,7 @@ public class GuiCreateReminder extends GuiScreen {
 	}
 
 	private void drawNewLayout() {
-		Jump selectedJump = ReminderManager.getSelectedJump();
+		Jump selectedJump = SelectionState.getSelectedJump();
 		String jumpId = (selectedJump != null && selectedJump.getId() != null) ? selectedJump.getId() : "<none>";
 
 		fontRendererObj.drawString("Jump: ", getLabelX(), getRowY(2) + 6, COLOR_TEXT, true);
@@ -189,24 +188,13 @@ public class GuiCreateReminder extends GuiScreen {
 	}
 
 	private void drawValidationOverlays() {
-		boolean validX = canParseInt(textX);
-		boolean validY = canParseInt(textY);
-		boolean validZ = canParseInt(textZ);
+		boolean validX = FormFields.canParseInt(textX);
+		boolean validY = FormFields.canParseInt(textY);
+		boolean validZ = FormFields.canParseInt(textZ);
 
-		if (!validX) drawFieldOverlay(textX);
-		if (!validY) drawFieldOverlay(textY);
-		if (!validZ) drawFieldOverlay(textZ);
-	}
-
-	private void drawFieldOverlay(GuiTextField field) {
-		if (field == null) {
-			return;
-		}
-		int left = field.xPosition - 1;
-		int top = field.yPosition - 1;
-		int right = field.xPosition + field.width + 1;
-		int bottom = field.yPosition + field.height + 1;
-		drawRect(left, top, right, bottom, COLOR_INVALID_OVERLAY);
+		if (!validX) FormFields.drawInvalidOverlay(textX);
+		if (!validY) FormFields.drawInvalidOverlay(textY);
+		if (!validZ) FormFields.drawInvalidOverlay(textZ);
 	}
 
 	private void createFields() {
@@ -215,7 +203,7 @@ public class GuiCreateReminder extends GuiScreen {
 		int x = getFieldX();
 
 		// Coordinates
-		int coordsY = isRestoredContext() ? getRowY(9) : getRowY(3);
+		int coordsY = SelectionState.isRestoredContext() ? getRowY(9) : getRowY(3);
 		int third = FIELD_WIDTH / 3;
 
 		textX = new GuiTextField(100, fr, x, coordsY, third - 6, 20);
@@ -228,7 +216,7 @@ public class GuiCreateReminder extends GuiScreen {
 		int sy = 0;
 		int sz = 0;
 
-		Jump jump = ReminderManager.getSelectedJump();
+		Jump jump = SelectionState.getSelectedJump();
 		if (jump != null) {
 			sx = jump.getX();
 			sy = jump.getY();
@@ -248,10 +236,10 @@ public class GuiCreateReminder extends GuiScreen {
 		// Square icon button next to coordinates fields
 		int iconX = x + FIELD_WIDTH + 6;
 		int iconY = coordsY - 1;
-		usePlayerCoordsButton = new IconSquareButton(BTN_USE_PLAYER_COORDS, iconX, iconY, ICON_BTN_SIZE, ICON_BTN_SIZE, COORDS_ICON);
+		usePlayerCoordsButton = new FramedIconButton(BTN_USE_PLAYER_COORDS, iconX, iconY, ICON_BTN_SIZE, ICON_BTN_SIZE, COORDS_ICON);
 		buttonList.add(usePlayerCoordsButton);
 
-		if (isRestoredContext()) {
+		if (SelectionState.isRestoredContext()) {
 			// Legacy mode: Line 1..5
 			textLine1 = new GuiTextField(201, fr, x, getRowY(3), FIELD_WIDTH, 20);
 			textLine2 = new GuiTextField(202, fr, x, getRowY(4), FIELD_WIDTH, 20);
@@ -321,16 +309,6 @@ public class GuiCreateReminder extends GuiScreen {
 		updateSaveButtonState();
 	}
 
-	private boolean isRestoredContext() {
-		ServerProfile s = ReminderManager.getSelectedServer();
-		if (s != null && RESTORED_ID.equals(s.getId())) {
-			return true;
-		}
-
-		ParkourMap m = ReminderManager.getSelectedMap();
-		return m != null && RESTORED_ID.equals(m.getId());
-	}
-
 	protected int getFieldX() {
 		return (this.width - FIELD_WIDTH) / 2;
 	}
@@ -347,7 +325,7 @@ public class GuiCreateReminder extends GuiScreen {
 
 	@Override
 	protected void keyTyped(char typedChar, int keyCode) throws IOException {
-		if (isRestoredContext()) {
+		if (SelectionState.isRestoredContext()) {
 			textLine1.textboxKeyTyped(typedChar, keyCode);
 			textLine2.textboxKeyTyped(typedChar, keyCode);
 			textLine3.textboxKeyTyped(typedChar, keyCode);
@@ -378,7 +356,7 @@ public class GuiCreateReminder extends GuiScreen {
 
 	@Override
 	public void updateScreen() {
-		if (isRestoredContext()) {
+		if (SelectionState.isRestoredContext()) {
 			textLine1.updateCursorCounter();
 			textLine2.updateCursorCounter();
 			textLine3.updateCursorCounter();
@@ -410,44 +388,24 @@ public class GuiCreateReminder extends GuiScreen {
 			return;
 		}
 
-		boolean hasValidCoordinates = canParseInt(textX) && canParseInt(textY) && canParseInt(textZ);
+		boolean hasValidCoordinates = FormFields.canParseInt(textX) && FormFields.canParseInt(textY) && FormFields.canParseInt(textZ);
 
-		if (isRestoredContext()) {
+		if (SelectionState.isRestoredContext()) {
 			saveButton.enabled = hasValidCoordinates;
 			return;
 		}
 
 		boolean hasAnyText =
-				hasText(textPosition) ||
-						hasText(textFacing) ||
-						hasText(textSetup) ||
-						hasText(textStrategy) ||
-						hasText(textStrafe) ||
-						hasText(textTurn) ||
-						hasText(textAuthor) ||
-						hasText(textTips);
+				FormFields.hasText(textPosition) ||
+						FormFields.hasText(textFacing) ||
+						FormFields.hasText(textSetup) ||
+						FormFields.hasText(textStrategy) ||
+						FormFields.hasText(textStrafe) ||
+						FormFields.hasText(textTurn) ||
+						FormFields.hasText(textAuthor) ||
+						FormFields.hasText(textTips);
 
 		saveButton.enabled = hasValidCoordinates && hasAnyText;
-	}
-
-	protected static boolean hasText(GuiTextField f) {
-		return f != null && f.getText() != null && f.getText().trim().length() > 0;
-	}
-
-	protected static boolean canParseInt(GuiTextField f) {
-		if (f == null || f.getText() == null) {
-			return false;
-		}
-		String s = f.getText().trim();
-		if (s.isEmpty() || "-".equals(s)) {
-			return false;
-		}
-		try {
-			Integer.parseInt(s);
-			return true;
-		} catch (Exception ignored) {
-			return false;
-		}
 	}
 
 	@Override
@@ -467,7 +425,7 @@ public class GuiCreateReminder extends GuiScreen {
 		}
 
 		if (button.id == 21) {
-			ParkourMap map = ReminderManager.getSelectedMap();
+			ParkourMap map = SelectionState.getSelectedMap();
 			if (map != null) {
 				Minecraft.getMinecraft().displayGuiScreen(new GuiJumpList(parentScreen, map));
 			} else {
@@ -485,7 +443,7 @@ public class GuiCreateReminder extends GuiScreen {
 			int y = Integer.parseInt(textY.getText().trim());
 			int z = Integer.parseInt(textZ.getText().trim());
 
-			if (isRestoredContext()) {
+			if (SelectionState.isRestoredContext()) {
 				saveLegacyStrategy(x, y, z);
 			} else {
 				saveNewStrategy(x, y, z);
@@ -504,16 +462,16 @@ public class GuiCreateReminder extends GuiScreen {
 	}
 
 	private void saveLegacyStrategy(int x, int y, int z) {
-		ParkourMap map = ReminderManager.getSelectedMap();
+		ParkourMap map = SelectionState.getSelectedMap();
 		if (map == null) {
 			return;
 		}
 
-		Jump sel = ReminderManager.getSelectedJump();
+		Jump sel = SelectionState.getSelectedJump();
 		if (sel == null) {
-			String newJumpId = "Jump" + (ReminderManager.getJumps(map).size() + 1);
-			sel = ReminderManager.getOrCreateJumpByNameAndCoords(map, newJumpId, x, y, z);
-			ReminderManager.setSelectedJump(sel);
+			String newJumpId = "Jump" + (JumpService.getJumps(map).size() + 1);
+			sel = JumpService.getOrCreateJumpByNameAndCoords(map, newJumpId, x, y, z);
+			SelectionState.setSelectedJump(sel);
 		}
 
 		if (sel != null) {
@@ -523,17 +481,17 @@ public class GuiCreateReminder extends GuiScreen {
 		}
 
 		ArrayList<String> lines = new ArrayList<String>();
-		lines.add(safe(textLine1.getText()));
-		lines.add(safe(textLine2.getText()));
-		lines.add(safe(textLine3.getText()));
-		lines.add(safe(textLine4.getText()));
-		lines.add(safe(textLine5.getText()));
+		lines.add(FormFields.trimmed(textLine1.getText()));
+		lines.add(FormFields.trimmed(textLine2.getText()));
+		lines.add(FormFields.trimmed(textLine3.getText()));
+		lines.add(FormFields.trimmed(textLine4.getText()));
+		lines.add(FormFields.trimmed(textLine5.getText()));
 
-		ReminderManager.createReminder(lines, x, y, z);
+		StrategyService.createReminder(lines, x, y, z);
 	}
 
 	private void saveNewStrategy(int x, int y, int z) {
-		Jump jump = ReminderManager.getSelectedJump();
+		Jump jump = SelectionState.getSelectedJump();
 		if (jump != null) {
 			jump.setX(x);
 			jump.setY(y);
@@ -541,25 +499,21 @@ public class GuiCreateReminder extends GuiScreen {
 		}
 
 		ArrayList<String> lines = new ArrayList<String>();
-		lines.add(safe(textPosition.getText()));
-		lines.add(safe(textFacing.getText()));
-		lines.add(safe(textSetup.getText()));
-		lines.add(safe(textStrategy.getText()));
-		lines.add(safe(textStrafe.getText()));
-		lines.add(safe(textTurn.getText()));
-		lines.add(safe(textAuthor.getText()));
-		lines.add(safe(textTips.getText()));
+		lines.add(FormFields.trimmed(textPosition.getText()));
+		lines.add(FormFields.trimmed(textFacing.getText()));
+		lines.add(FormFields.trimmed(textSetup.getText()));
+		lines.add(FormFields.trimmed(textStrategy.getText()));
+		lines.add(FormFields.trimmed(textStrafe.getText()));
+		lines.add(FormFields.trimmed(textTurn.getText()));
+		lines.add(FormFields.trimmed(textAuthor.getText()));
+		lines.add(FormFields.trimmed(textTips.getText()));
 
-		ReminderManager.createReminder(lines, x, y, z);
-	}
-
-	protected static String safe(String s) {
-		return s != null ? s.trim() : "";
+		StrategyService.createReminder(lines, x, y, z);
 	}
 
 	@Override
 	protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
-		if (isRestoredContext()) {
+		if (SelectionState.isRestoredContext()) {
 			textLine1.mouseClicked(mouseX, mouseY, mouseButton);
 			textLine2.mouseClicked(mouseX, mouseY, mouseButton);
 			textLine3.mouseClicked(mouseX, mouseY, mouseButton);
@@ -585,48 +539,4 @@ public class GuiCreateReminder extends GuiScreen {
 	}
 
 	// Square icon button styled to match vanilla text field look.
-	protected class IconSquareButton extends GuiButton {
-
-		private final ResourceLocation icon;
-
-		public IconSquareButton(int id, int x, int y, int w, int h, ResourceLocation icon) {
-			super(id, x, y, w, h, "");
-			this.icon = icon;
-		}
-
-		@Override
-		public void drawButton(Minecraft mc, int mouseX, int mouseY) {
-			if (!this.visible) {
-				return;
-			}
-
-			this.hovered = mouseX >= this.xPosition && mouseY >= this.yPosition
-					&& mouseX < this.xPosition + this.width && mouseY < this.yPosition + this.height;
-
-			// Match GuiTextField colors (1.8-style)
-			int borderColor = 0xFF5A5A5A;
-			int bgColor = 0xFF000000;
-
-			if (!this.enabled) {
-				borderColor = 0xFF404040;
-				bgColor = 0xFF101010;
-			} else if (this.hovered) {
-				borderColor = 0xFF808080;
-			}
-
-			drawRect(this.xPosition, this.yPosition, this.xPosition + this.width, this.yPosition + this.height, borderColor);
-			drawRect(this.xPosition + 1, this.yPosition + 1, this.xPosition + this.width - 1, this.yPosition + this.height - 1, bgColor);
-
-			if (icon != null) {
-				mc.getTextureManager().bindTexture(icon);
-				GlStateManager.color(1f, 1f, 1f, this.enabled ? 1f : 0.6f);
-
-				int ix = this.xPosition + (this.width - 16) / 2;
-				int iy = this.yPosition + (this.height - 16) / 2;
-
-				GuiCreateReminder.this.drawModalRectWithCustomSizedTexture(ix, iy, 0, 0, 16, 16, 16, 16);
-				GlStateManager.color(1f, 1f, 1f, 1f);
-			}
-		}
-	}
 }

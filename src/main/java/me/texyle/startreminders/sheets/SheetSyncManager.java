@@ -21,9 +21,6 @@ public final class SheetSyncManager {
     private static final int READ_TIMEOUT_MS = 12000;
     private static final int MAX_REDIRECTS = 5;
 
-    // Set to false to disable HTTP debug logs
-    private static final boolean DEBUG = false;
-
     private SheetSyncManager() {}
 
     public static boolean isSyncInProgress() {
@@ -135,12 +132,6 @@ public final class SheetSyncManager {
                 String contentType = conn.getHeaderField("Content-Type");
                 String location = conn.getHeaderField("Location");
 
-                if (DEBUG) {
-                    System.out.println("[ParkourStrats] HTTP " + code + " URL=" + current);
-                    System.out.println("[ParkourStrats] Content-Type=" + contentType);
-                    System.out.println("[ParkourStrats] Location=" + location);
-                }
-
                 if (isRedirect(code)) {
                     String loc = location;
                     if (loc == null || loc.trim().isEmpty()) {
@@ -164,13 +155,6 @@ public final class SheetSyncManager {
 
                 is = new BufferedInputStream(raw);
                 String body = readAllUtf8(is);
-
-                if (DEBUG) {
-                    String prefix = body.substring(0, Math.min(200, body.length()))
-                            .replace("\n", "\\n")
-                            .replace("\r", "\\r");
-                    System.out.println("[ParkourStrats] Body prefix=" + prefix);
-                }
 
                 return new HttpResult(code, current, contentType, location, body);
 

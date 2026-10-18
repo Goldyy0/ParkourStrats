@@ -3,14 +3,15 @@ package me.texyle.startreminders.gui.hierarchy;
 import java.io.IOException;
 import java.util.ArrayList;
 
-import me.texyle.startreminders.data.MapSection;
-import me.texyle.startreminders.data.ParkourMap;
-import me.texyle.startreminders.reminders.ReminderManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
-import net.minecraft.util.ChatComponentText;
-import net.minecraft.util.EnumChatFormatting;
+
+import me.texyle.startreminders.data.MapSection;
+import me.texyle.startreminders.data.ParkourMap;
+import me.texyle.startreminders.services.SectionService;
+import me.texyle.startreminders.sheets.SectionSyncService;
+import me.texyle.startreminders.utils.ChatUtils;
 
 public class GuiConfigureSections extends GuiScreen {
 
@@ -274,117 +275,120 @@ public class GuiConfigureSections extends GuiScreen {
     protected void actionPerformed(GuiButton button) throws IOException {
         if (button == null) return;
 
-        if (button.id == BTN_BACK) {
-            Minecraft.getMinecraft().displayGuiScreen(parent);
-            return;
-        }
-
-        if (button.id == BTN_SYNC_SECTIONS) {
-            if (map == null) return;
-
-            Minecraft.getMinecraft().displayGuiScreen(new GuiTextPrompt(
-                    this,
-                    "Sync Sections: paste Spreadsheet URL",
-                    map != null ? map.getSheetUrl() : "",
-                    new GuiTextPrompt.IResultHandler() {
-                        @Override
-                        public void onConfirm(String text) {
-                            String url = (text != null) ? text.trim() : "";
-
-                            // Persist the URL (current design uses map.sheetUrl for both sheet sync and section sync)
-                            if (map != null) {
-                                map.setSheetUrl(url);
-                            }
-
-                            boolean ok = ReminderManager.syncSectionsFromAppsScript(map, url);
-
-                            if (ok) {
-                                sendClientChat_(EnumChatFormatting.DARK_AQUA + "[ParkourStrats] " + EnumChatFormatting.AQUA
-                                        + "Sections synced from spreadsheet.");
-                            } else {
-                                // ReminderManager now posts a detailed error message to chat on failure.
-                                // To avoid duplicate messages, we do not print the same error again here.
-                                // As a safety fallback, show a generic line only if no error was provided.
-                                String err = ReminderManager.getLastSectionSyncError();
-                                if (err == null || err.trim().isEmpty()) {
-                                    sendClientChat_(EnumChatFormatting.DARK_AQUA + "[ParkourStrats] " + EnumChatFormatting.RED
-                                            + "Section sync failed.");
-                                }
-                            }
-
-                            // Rebuild UI to reflect changes (and refresh list)
-                            initGui();
-                        }
-
-                        @Override
-                        public void onCancel() { }
-                    }
-            ));
-            return;
-        }
-
-        if (button.id == BTN_TAB_1) { activeLevel = 1; onLevelChanged(); return; }
-        if (button.id == BTN_TAB_2) { activeLevel = 2; onLevelChanged(); return; }
-        if (button.id == BTN_TAB_3) { activeLevel = 3; onLevelChanged(); return; }
-        if (button.id == BTN_TAB_4) { activeLevel = 4; onLevelChanged(); return; }
-
-        if (button.id == BTN_CREATE) {
-            Minecraft.getMinecraft().displayGuiScreen(new GuiEditSection(this, map, activeLevel, null));
-            return;
-        }
-
-        if (button.id == BTN_EDIT) {
-            MapSection sel = (list != null) ? list.getSelected() : null;
-            if (sel == null) return;
-            Minecraft.getMinecraft().displayGuiScreen(new GuiEditSection(this, map, activeLevel, sel));
-            return;
-        }
-
-        if (button.id == BTN_DELETE) {
-            final MapSection sel = (list != null) ? list.getSelected() : null;
-            if (sel == null) return;
-
-            String name = (sel.getName() != null) ? sel.getName().trim() : "";
-            if (name.isEmpty()) name = "<unnamed>";
-
-            final String msg = "Do you really want to delete section \"" + name + "\"?";
-
-            // Show a confirmation dialog before deleting.
-            Minecraft.getMinecraft().displayGuiScreen(new GuiConfirm(
-                    this,
-                    "Delete section",
-                    msg,
-                    new GuiConfirm.IConfirmHandler() {
-                        @Override
-                        public void onYes() {
-                            deleteSection(sel);
-                        }
-
-                        @Override
-                        public void onNo() {
-                            // Do nothing; return to this screen.
-                        }
-                    }
-            ));
-            return;
+        switch (button.id) {
+            case BTN_BACK:
+                Minecraft.getMinecraft().displayGuiScreen(parent);
+                return;
+            case BTN_SYNC_SECTIONS:
+                onSyncSections();
+                return;
+            case BTN_TAB_1:
+                switchLevel(1);
+                return;
+            case BTN_TAB_2:
+                switchLevel(2);
+                return;
+            case BTN_TAB_3:
+                switchLevel(3);
+                return;
+            case BTN_TAB_4:
+                switchLevel(4);
+                return;
+            case BTN_CREATE:
+                Minecraft.getMinecraft().displayGuiScreen(new GuiEditSection(this, map, activeLevel, null));
+                return;
+            case BTN_EDIT:
+                onEditSection();
+                return;
+            case BTN_DELETE:
+                onDeleteSection();
+                return;
+            default:
+                break;
         }
     }
 
-    private void sendClientChat_(String msg) {
-        Minecraft mc = Minecraft.getMinecraft();
-        if (mc == null || mc.thePlayer == null || msg == null) return;
-        mc.thePlayer.addChatMessage(new ChatComponentText(msg));
+    private void onSyncSections() {
+        if (map == null) return;
+
+        Minecraft.getMinecraft().displayGuiScreen(new GuiTextPrompt(
+                this,
+                "Sync Sections: paste Spreadsheet URL",
+                map.getSheetUrl(),
+                new GuiTextPrompt.IResultHandler() {
+                    @Override
+                    public void onConfirm(String text) {
+                        String url = (text != null) ? text.trim() : "";
+
+                        // Persist the URL (current design uses map.sheetUrl for both sheet sync and section sync)
+                        map.setSheetUrl(url);
+
+                        boolean ok = SectionSyncService.syncSectionsFromAppsScript(map, url);
+
+                        if (ok) {
+                            ChatUtils.info("Sections synced from spreadsheet.");
+                        } else {
+                            // SectionSyncService already posts a detailed error to chat on failure; show a
+                            // generic line only if it did not provide one.
+                            String err = SectionSyncService.getLastSectionSyncError();
+                            if (err == null || err.trim().isEmpty()) {
+                                ChatUtils.error("Section sync failed.");
+                            }
+                        }
+
+                        // Rebuild UI to reflect changes (and refresh list)
+                        initGui();
+                    }
+
+                    @Override
+                    public void onCancel() { }
+                }
+        ));
+    }
+
+    private void switchLevel(int levelOneBased) {
+        activeLevel = levelOneBased;
+        onLevelChanged();
+    }
+
+    private void onEditSection() {
+        MapSection sel = (list != null) ? list.getSelected() : null;
+        if (sel == null) return;
+        Minecraft.getMinecraft().displayGuiScreen(new GuiEditSection(this, map, activeLevel, sel));
+    }
+
+    private void onDeleteSection() {
+        final MapSection sel = (list != null) ? list.getSelected() : null;
+        if (sel == null) return;
+
+        String name = (sel.getName() != null) ? sel.getName().trim() : "";
+        if (name.isEmpty()) name = "<unnamed>";
+
+        final String msg = "Do you really want to delete section \"" + name + "\"?";
+
+        // Show a confirmation dialog before deleting.
+        Minecraft.getMinecraft().displayGuiScreen(new GuiConfirm(
+                this,
+                "Delete section",
+                msg,
+                new GuiConfirm.IConfirmHandler() {
+                    @Override
+                    public void onYes() {
+                        deleteSection(sel);
+                    }
+
+                    @Override
+                    public void onNo() {
+                        // Do nothing; return to this screen.
+                    }
+                }
+        ));
     }
 
     private void deleteSection(MapSection sel) {
         if (sel == null) return;
 
-        ArrayList<MapSection> lst = getCurrentList();
-        if (lst == null) return;
-
-        lst.remove(sel);
-
-        ReminderManager.saveToFile();
+        SectionService.deleteSection(map, activeLevel, sel);
 
         if (list != null) {
             list.setActiveLevel(activeLevel);

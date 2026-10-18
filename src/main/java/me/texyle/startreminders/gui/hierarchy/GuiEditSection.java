@@ -1,20 +1,19 @@
-// GuiEditSection.java
 package me.texyle.startreminders.gui.hierarchy;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.UUID;
 
-import me.texyle.startreminders.data.Jump;
-import me.texyle.startreminders.data.MapSection;
-import me.texyle.startreminders.data.ParkourMap;
-import me.texyle.startreminders.reminders.ReminderManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
-import net.minecraft.util.ChatComponentText;
 import net.minecraft.util.EnumChatFormatting;
+
+import me.texyle.startreminders.data.Jump;
+import me.texyle.startreminders.data.MapSection;
+import me.texyle.startreminders.data.ParkourMap;
+import me.texyle.startreminders.services.SectionService;
+import me.texyle.startreminders.utils.ChatUtils;
 
 public class GuiEditSection extends GuiScreen {
 
@@ -265,201 +264,96 @@ public class GuiEditSection extends GuiScreen {
     protected void actionPerformed(GuiButton button) throws IOException {
         if (button == null) return;
 
-        if (button.id == BTN_CANCEL) {
-            Minecraft.getMinecraft().displayGuiScreen(parent);
-            return;
-        }
-
-        if (button.id == BTN_COLOR) {
-            stashDraft();
-            Minecraft.getMinecraft().displayGuiScreen(new GuiColorPicker(this, colorArgb, new GuiColorPicker.IColorHandler() {
-                @Override
-                public void onPick(int argb) {
-                    colorArgb = argb;
-                }
-
-                @Override
-                public void onCancel() { }
-            }));
-            return;
-        }
-
-        if (button.id == BTN_TEXT_COLOR) {
-            // Toggle between white and black
-            if ((textColorArgb & 0x00FFFFFF) == 0x000000) {
-                textColorArgb = TEXT_COLOR_WHITE;
-            } else {
-                textColorArgb = TEXT_COLOR_BLACK;
-            }
-            return;
-        }
-
-        if (button.id == BTN_PICK_START) {
-            stashDraft();
-            Minecraft.getMinecraft().displayGuiScreen(new GuiPickJumpIndex(this, map, "Pick start of section", new GuiPickJumpIndex.IResultHandler() {
-                @Override
-                public void onPick(int jumpIndex) {
-                    startIdx = jumpIndex;
-                    if (endIdx != null && endIdx < startIdx) {
-                        endIdx = startIdx;
-                    }
-                }
-
-                @Override
-                public void onCancel() { }
-            }));
-            return;
-        }
-
-        if (button.id == BTN_PICK_END) {
-            stashDraft();
-            Minecraft.getMinecraft().displayGuiScreen(new GuiPickJumpIndex(this, map, "Pick end of section", new GuiPickJumpIndex.IResultHandler() {
-                @Override
-                public void onPick(int jumpIndex) {
-                    endIdx = jumpIndex;
-                    if (startIdx != null && endIdx < startIdx) {
-                        startIdx = endIdx;
-                    }
-                }
-
-                @Override
-                public void onCancel() { }
-            }));
-            return;
-        }
-
-        if (button.id == BTN_SAVE) {
-            stashDraft();
-
-            if (map == null) {
-                sendClientChat(EnumChatFormatting.RED + "Map is null.");
+        switch (button.id) {
+            case BTN_CANCEL:
+                Minecraft.getMinecraft().displayGuiScreen(parent);
                 return;
-            }
-
-            String name = (draftName != null) ? draftName.trim() : "";
-            if (name.length() == 0) {
-                sendClientChat(EnumChatFormatting.RED + "Section name cannot be empty.");
+            case BTN_COLOR:
+                onPickColor();
                 return;
-            }
-
-            ArrayList<Jump> jumps = (map != null) ? map.getJumps() : null;
-            int jumpCount = (jumps != null) ? jumps.size() : 0;
-
-            // Range is optional: either BOTH set, or BOTH unset.
-            boolean hasStart = (startIdx != null);
-            boolean hasEnd = (endIdx != null);
-
-            if (hasStart != hasEnd) {
-                sendClientChat(EnumChatFormatting.RED + "Please set both Start and End, or leave both Not set.");
+            case BTN_TEXT_COLOR:
+                onToggleTextColor();
                 return;
-            }
-
-            boolean hasRange = hasStart && hasEnd;
-
-            int s = -1;
-            int e = -1;
-
-            if (hasRange) {
-                s = startIdx.intValue();
-                e = endIdx.intValue();
-
-                if (jumpCount <= 0) {
-                    sendClientChat(EnumChatFormatting.RED + "This map has no jumps. Clear the range to save this section.");
-                    return;
-                }
-
-                if (s < 0 || e < 0 || s >= jumpCount || e >= jumpCount) {
-                    sendClientChat(EnumChatFormatting.RED + "Invalid section range.");
-                    return;
-                }
-
-                if (e < s) {
-                    int t = s;
-                    s = e;
-                    e = t;
-                }
-
-                // Disallow overlaps within the same level.
-                if (isOverlappingExistingSection(levelOneBased, s, e)) {
-                    sendClientChat(EnumChatFormatting.RED + "Section range overlaps another section on this level.");
-                    return;
-                }
-            }
-
-            if (e < s) {
-                int t = s;
-                s = e;
-                e = t;
-            }
-
-            MapSection target = (editing != null) ? editing : new MapSection();
-            if (editing == null) {
-                target.setId(UUID.randomUUID().toString());
-            }
-
-            target.setName(name);
-            target.setColorArgb(colorArgb);
-            target.setTextColorArgb(textColorArgb);
-
-            if (hasRange) {
-                target.setStartJumpIndex(s);
-                target.setEndJumpIndex(e);
-                target.normalizeRange();
-            } else {
-                // No range => section exists but is not rendered anywhere.
-                target.setStartJumpIndex(-1);
-                target.setEndJumpIndex(-1);
-            }
-
-            if (editing == null) {
-                map.getSectionsForLevel(levelOneBased).add(target);
-            }
-
-            ReminderManager.saveToFile();
-            Minecraft.getMinecraft().displayGuiScreen(parent);
+            case BTN_PICK_START:
+                onPickStart();
+                return;
+            case BTN_PICK_END:
+                onPickEnd();
+                return;
+            case BTN_SAVE:
+                onSave();
+                return;
+            default:
+                break;
         }
     }
 
-    private boolean isOverlappingExistingSection(int levelOneBased, int s, int e) {
-        if (map == null) return false;
-
-        ArrayList<MapSection> list = map.getSectionsForLevel(levelOneBased);
-        if (list == null || list.isEmpty()) return false;
-
-        for (int i = 0; i < list.size(); i++) {
-            MapSection other = list.get(i);
-            if (other == null) continue;
-
-            // Skip the section being edited.
-            if (editing != null && other == editing) continue;
-
-            int a = other.getStartJumpIndex();
-            int b = other.getEndJumpIndex();
-
-            // Inactive sections do not participate in overlap checks.
-            if (a < 0 || b < 0) continue;
-
-            if (b < a) {
-                int t = a;
-                a = b;
-                b = t;
+    private void onPickColor() {
+        stashDraft();
+        Minecraft.getMinecraft().displayGuiScreen(new GuiColorPicker(this, colorArgb, new GuiColorPicker.IColorHandler() {
+            @Override
+            public void onPick(int argb) {
+                colorArgb = argb;
             }
 
-            // Inclusive overlap: [a,b] intersects [s,e]
-            int left = Math.max(a, s);
-            int right = Math.min(b, e);
-            if (left <= right) {
-                return true;
-            }
-        }
-
-        return false;
+            @Override
+            public void onCancel() { }
+        }));
     }
 
-    private void sendClientChat(String msg) {
-        Minecraft mc = Minecraft.getMinecraft();
-        if (mc == null || mc.thePlayer == null || msg == null) return;
-        mc.thePlayer.addChatMessage(new ChatComponentText(msg));
+    /** Text color toggles between white and black. */
+    private void onToggleTextColor() {
+        if ((textColorArgb & 0x00FFFFFF) == 0x000000) {
+            textColorArgb = TEXT_COLOR_WHITE;
+        } else {
+            textColorArgb = TEXT_COLOR_BLACK;
+        }
+    }
+
+    private void onPickStart() {
+        stashDraft();
+        Minecraft.getMinecraft().displayGuiScreen(new GuiPickJumpIndex(this, map, "Pick start of section", new GuiPickJumpIndex.IResultHandler() {
+            @Override
+            public void onPick(int jumpIndex) {
+                startIdx = jumpIndex;
+                if (endIdx != null && endIdx < startIdx) {
+                    endIdx = startIdx;
+                }
+            }
+
+            @Override
+            public void onCancel() { }
+        }));
+    }
+
+    private void onPickEnd() {
+        stashDraft();
+        Minecraft.getMinecraft().displayGuiScreen(new GuiPickJumpIndex(this, map, "Pick end of section", new GuiPickJumpIndex.IResultHandler() {
+            @Override
+            public void onPick(int jumpIndex) {
+                endIdx = jumpIndex;
+                if (startIdx != null && endIdx < startIdx) {
+                    startIdx = endIdx;
+                }
+            }
+
+            @Override
+            public void onCancel() { }
+        }));
+    }
+
+    private void onSave() {
+        stashDraft();
+
+        String error = SectionService.saveSection(map, levelOneBased, editing,
+                draftName, colorArgb, textColorArgb, startIdx, endIdx);
+
+        if (error != null) {
+            ChatUtils.sendChat(Minecraft.getMinecraft(), EnumChatFormatting.RED + error);
+            return;
+        }
+
+        Minecraft.getMinecraft().displayGuiScreen(parent);
     }
 
     @Override

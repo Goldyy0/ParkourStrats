@@ -2,11 +2,12 @@ package me.texyle.startreminders.gui.convert;
 
 import java.io.IOException;
 
-import me.texyle.startreminders.data.Jump;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.util.EnumChatFormatting;
+
+import me.texyle.startreminders.data.Jump;
 
 public class GuiConvertStep2Editor extends GuiScreen {
 

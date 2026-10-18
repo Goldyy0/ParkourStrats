@@ -34,7 +34,7 @@ public final class SheetJumpNameExtractor {
             return res;
         }
 
-        int headerRowIndex = findHeaderRowIndex(rows);
+        int headerRowIndex = SheetHeaderLookup.findHeaderRowIndex(rows);
         res.headerRowIndex = headerRowIndex;
 
         if (headerRowIndex < 0 || headerRowIndex >= rows.size()) {
@@ -47,7 +47,7 @@ public final class SheetJumpNameExtractor {
         // Fallback: try to find "Jump" column manually if matcher failed
         if (cols == null || cols.jump < 0) {
             cols = (cols != null) ? cols : new SheetHeaderMatcher.Columns();
-            cols.jump = findHeaderCol(header, "jump", "jumpname", "jump id", "name");
+            cols.jump = SheetHeaderLookup.findHeaderCol(header, "jump", "jumpname", "jump id", "name");
         }
 
         if (cols.jump < 0) {
@@ -115,89 +115,6 @@ public final class SheetJumpNameExtractor {
         }
 
         return res;
-    }
-
-    /**
-     * Backwards compatible helper: returns only jump names (old API).
-     */
-    public static List<String> extractJumpNames(String csvText) {
-        Result r = extract(csvText);
-        return r != null ? r.jumpNames : new ArrayList<String>();
-    }
-
-    private static int findHeaderRowIndex(List<List<String>> rows) {
-        if (rows == null || rows.isEmpty()) return -1;
-
-        int maxScan = Math.min(10, rows.size());
-        int bestRow = -1;
-        int bestScore = 0;
-
-        for (int r = 0; r < maxScan; r++) {
-            List<String> row = rows.get(r);
-            if (row == null || row.isEmpty()) continue;
-
-            int score = scoreHeaderRow(row);
-            if (score > bestScore) {
-                bestScore = score;
-                bestRow = r;
-            }
-        }
-
-        // Require minimal confidence
-        return (bestScore >= 4) ? bestRow : -1;
-    }
-
-    private static int scoreHeaderRow(List<String> row) {
-        int score = 0;
-
-        for (int i = 0; i < row.size(); i++) {
-            String cell = row.get(i);
-            if (cell == null) continue;
-
-            String k = CsvUtils.normalizeKey(cell);
-            if (k.isEmpty()) continue;
-
-            // Strong indicators
-            if (k.equals("jump") || k.equals("jumpname") || k.equals("jumptitle")) {
-                score += 2;
-                continue;
-            }
-            if (k.equals("strategy") || k.equals("strat")) {
-                score += 2;
-                continue;
-            }
-
-            // Medium indicators
-            if (k.equals("position") || k.equals("pos")) score += 1;
-            else if (k.equals("facing") || k.equals("face")) score += 1;
-            else if (k.equals("setup")) score += 1;
-            else if (k.equals("strafe")) score += 1;
-            else if (k.equals("turn")) score += 1;
-            else if (k.equals("author") || k.equals("by")) score += 1;
-            else if (k.equals("tips") || k.equals("notes") || k.equals("comment")) score += 1;
-
-                // Section-ish headers often contain "section"
-            else if (k.contains("section")) score += 1;
-        }
-
-        return score;
-    }
-
-    private static int findHeaderCol(List<String> header, String... names) {
-        if (header == null || names == null) return -1;
-
-        for (int i = 0; i < header.size(); i++) {
-            String h = header.get(i);
-            String hn = CsvUtils.normalizeKey(h);
-
-            for (String n : names) {
-                if (n == null) continue;
-                if (hn.equals(CsvUtils.normalizeKey(n))) {
-                    return i;
-                }
-            }
-        }
-        return -1;
     }
 
 }

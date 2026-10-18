@@ -3,18 +3,22 @@ package me.texyle.startreminders.gui;
 import java.io.IOException;
 import java.util.ArrayList;
 
-import me.texyle.startreminders.data.Jump;
-import me.texyle.startreminders.data.ParkourMap;
-import me.texyle.startreminders.reminders.Reminder;
-import me.texyle.startreminders.reminders.ReminderManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.client.renderer.GlStateManager;
-import net.minecraft.util.ChatComponentText;
 import net.minecraft.util.EnumChatFormatting;
+
+import me.texyle.startreminders.data.Jump;
+import me.texyle.startreminders.data.ParkourMap;
+import me.texyle.startreminders.persistence.BuiltinContainers;
+import me.texyle.startreminders.reminders.Reminder;
+import me.texyle.startreminders.reminders.SelectionState;
+import me.texyle.startreminders.services.JumpService;
+import me.texyle.startreminders.services.StrategyService;
+import me.texyle.startreminders.utils.ChatUtils;
 
 /**
  * Converts a legacy RestoredStrats entry into a new Global jump+strategy.
@@ -112,14 +116,14 @@ public class GuiConvertLegacy extends GuiScreen {
         legacyLine4 = new GuiTextField(1014, fr, leftPanelX + 80, panelTop + rowH * 6, legacyFieldW - 90, 20);
         legacyLine5 = new GuiTextField(1015, fr, leftPanelX + 80, panelTop + rowH * 7, legacyFieldW - 90, 20);
 
-        setReadOnly(legacyX);
-        setReadOnly(legacyY);
-        setReadOnly(legacyZ);
-        setReadOnly(legacyLine1);
-        setReadOnly(legacyLine2);
-        setReadOnly(legacyLine3);
-        setReadOnly(legacyLine4);
-        setReadOnly(legacyLine5);
+        FormFields.setReadOnly(legacyX);
+        FormFields.setReadOnly(legacyY);
+        FormFields.setReadOnly(legacyZ);
+        FormFields.setReadOnly(legacyLine1);
+        FormFields.setReadOnly(legacyLine2);
+        FormFields.setReadOnly(legacyLine3);
+        FormFields.setReadOnly(legacyLine4);
+        FormFields.setReadOnly(legacyLine5);
 
         // Fill legacy values
         int lx = (legacyJump != null) ? legacyJump.getX() : 0;
@@ -132,11 +136,12 @@ public class GuiConvertLegacy extends GuiScreen {
 
         ArrayList<String> legacyLines = getLegacyLines();
 
-        legacyLine1.setText(getLegacyLineForDisplay(legacyLines, 0));
-        legacyLine2.setText(getLegacyLineForDisplay(legacyLines, 1));
-        legacyLine3.setText(getLegacyLineForDisplay(legacyLines, 2));
-        legacyLine4.setText(getLegacyLineForDisplay(legacyLines, 3));
-        legacyLine5.setText(getLegacyLineForDisplay(legacyLines, 4));
+        String[] legacyDisplay = StrategyFormat.restoredEditorLines(legacyLines);
+        legacyLine1.setText(legacyDisplay[0]);
+        legacyLine2.setText(legacyDisplay[1]);
+        legacyLine3.setText(legacyDisplay[2]);
+        legacyLine4.setText(legacyDisplay[3]);
+        legacyLine5.setText(legacyDisplay[4]);
 
         // New editor (editable) - coords prefilled from legacy
         newX = new GuiTextField(2001, fr, rightPanelX + 90, panelTop + rowH * 1, 50, 20);
@@ -171,12 +176,6 @@ public class GuiConvertLegacy extends GuiScreen {
         newPosition.setFocused(true);
     }
 
-    private static void setReadOnly(GuiTextField f) {
-        if (f == null) return;
-        f.setCanLoseFocus(true);
-        f.setEnabled(false);
-    }
-
     private ArrayList<String> getLegacyLines() {
         if (legacyJump == null) return new ArrayList<String>();
         ArrayList<Reminder> rs = legacyJump.getReminders();
@@ -188,65 +187,6 @@ public class GuiConvertLegacy extends GuiScreen {
         Reminder r = rs.get(idx);
         if (r == null || r.lines == null) return new ArrayList<String>();
         return r.lines;
-    }
-
-    private static String getLine(ArrayList<String> lines, int i) {
-        if (lines == null || i < 0 || i >= lines.size()) return "";
-        String s = lines.get(i);
-        return (s != null) ? s : "";
-    }
-
-    private static boolean isBlank(String s) {
-        return s == null || s.trim().isEmpty();
-    }
-
-    private static boolean isBetterLcEightLine(ArrayList<String> lines) {
-        if (lines == null || lines.size() < 8) return false;
-
-        // BetterLC: Position/Facing are meaningful (at least one non-empty)
-        return !isBlank(getLine(lines, 0)) || !isBlank(getLine(lines, 1));
-    }
-
-    private static String getLegacyLineForDisplay(ArrayList<String> lines, int displayIndex) {
-        if (lines == null || displayIndex < 0) {
-            return "";
-        }
-
-        if (lines.size() >= 8) {
-            boolean betterLc = isBetterLcEightLine(lines);
-
-            int realIndex = -1;
-
-            if (betterLc) {
-                // BetterLC display mapping:
-                // line1=Position(0), line2=Facing(1), line3=Setup(2), line4=Input(3), line5=Comment(7)
-                switch (displayIndex) {
-                    case 0: realIndex = 0; break;
-                    case 1: realIndex = 1; break;
-                    case 2: realIndex = 2; break;
-                    case 3: realIndex = 3; break;
-                    case 4: realIndex = 7; break;
-                    default: realIndex = -1; break;
-                }
-            } else {
-                // Legacy-normalized 8-line (Position/Facing empty):
-                // Show from Setup so it starts at Line 1:
-                // line1=Setup(2), line2=Strategy(3), line3=Strafe(4), line4=Turn(5), line5=Tips(7)
-                switch (displayIndex) {
-                    case 0: realIndex = 2; break;
-                    case 1: realIndex = 3; break;
-                    case 2: realIndex = 4; break;
-                    case 3: realIndex = 5; break;
-                    case 4: realIndex = 7; break;
-                    default: realIndex = -1; break;
-                }
-            }
-
-            return (realIndex >= 0) ? getLine(lines, realIndex) : "";
-        }
-
-        // Old legacy behavior (pre-normalized): show first 5 lines as-is
-        return getLine(lines, displayIndex);
     }
 
     @Override
@@ -409,36 +349,20 @@ public class GuiConvertLegacy extends GuiScreen {
     private void updateSaveButtonState() {
         if (saveButton == null) return;
 
-        boolean coordsOk = canParseInt(newX) && canParseInt(newY) && canParseInt(newZ);
+        boolean coordsOk = FormFields.canParseInt(newX) && FormFields.canParseInt(newY) && FormFields.canParseInt(newZ);
 
         // New rule: no specific fields required, but at least one must be non-empty.
         boolean hasAnyText =
-                hasText(newPosition) ||
-                        hasText(newFacing) ||
-                        hasText(newSetup) ||
-                        hasText(newStrategy) ||
-                        hasText(newStrafe) ||
-                        hasText(newTurn) ||
-                        hasText(newAuthor) ||
-                        hasText(newTips);
+                FormFields.hasText(newPosition) ||
+                        FormFields.hasText(newFacing) ||
+                        FormFields.hasText(newSetup) ||
+                        FormFields.hasText(newStrategy) ||
+                        FormFields.hasText(newStrafe) ||
+                        FormFields.hasText(newTurn) ||
+                        FormFields.hasText(newAuthor) ||
+                        FormFields.hasText(newTips);
 
         saveButton.enabled = coordsOk && hasAnyText;
-    }
-
-    private static boolean hasText(GuiTextField f) {
-        return f != null && f.getText() != null && f.getText().trim().length() > 0;
-    }
-
-    private static boolean canParseInt(GuiTextField f) {
-        if (f == null || f.getText() == null) return false;
-        String s = f.getText().trim();
-        if (s.isEmpty() || "-".equals(s)) return false;
-        try {
-            Integer.parseInt(s);
-            return true;
-        } catch (Exception ignored) {
-            return false;
-        }
     }
 
     @Override
@@ -453,9 +377,9 @@ public class GuiConvertLegacy extends GuiScreen {
                 return;
             }
 
-            ParkourMap globalMap = ReminderManager.getGlobalMap();
+            ParkourMap globalMap = BuiltinContainers.getGlobalMap();
             if (globalMap == null) {
-                sendChatError("Global map is not available.");
+                ChatUtils.error("Global map is not available.");
                 return;
             }
 
@@ -463,14 +387,14 @@ public class GuiConvertLegacy extends GuiScreen {
             int y = Integer.parseInt(newY.getText().trim());
             int z = Integer.parseInt(newZ.getText().trim());
 
-            Jump j = ReminderManager.getOrCreateJumpByNameAndCoords(globalMap, newJumpName, x, y, z);
+            Jump j = JumpService.getOrCreateJumpByNameAndCoords(globalMap, newJumpName, x, y, z);
             if (j == null) {
-                sendChatError("Failed to create Global jump.");
+                ChatUtils.error("Failed to create Global jump.");
                 return;
             }
 
-            ReminderManager.setSelectedMap(globalMap);
-            ReminderManager.setSelectedJump(j);
+            SelectionState.setSelectedMap(globalMap);
+            SelectionState.setSelectedJump(j);
 
             // Persist jump-level coords
             j.setX(x);
@@ -480,23 +404,23 @@ public class GuiConvertLegacy extends GuiScreen {
             // New format lines:
             // [Position, Facing, Setup, Strategy, Strafe, Turn, Author, Tips]
             ArrayList<String> lines = new ArrayList<String>();
-            lines.add(safe(newPosition.getText()));
-            lines.add(safe(newFacing.getText()));
-            lines.add(safe(newSetup.getText()));
-            lines.add(safe(newStrategy.getText()));
-            lines.add(safe(newStrafe.getText()));
-            lines.add(safe(newTurn.getText()));
-            lines.add(safe(newAuthor.getText()));
-            lines.add(safe(newTips.getText()));
+            lines.add(FormFields.trimmed(newPosition.getText()));
+            lines.add(FormFields.trimmed(newFacing.getText()));
+            lines.add(FormFields.trimmed(newSetup.getText()));
+            lines.add(FormFields.trimmed(newStrategy.getText()));
+            lines.add(FormFields.trimmed(newStrafe.getText()));
+            lines.add(FormFields.trimmed(newTurn.getText()));
+            lines.add(FormFields.trimmed(newAuthor.getText()));
+            lines.add(FormFields.trimmed(newTips.getText()));
 
-            ReminderManager.createReminder(lines, x, y, z);
+            StrategyService.createReminder(lines, x, y, z);
 
             // NEW: Remove the original legacy jump from RestoredStrats after a successful conversion.
-            boolean removed = ReminderManager.removeJumpFromRestoredStrats(legacyJump);
+            boolean removed = JumpService.removeJumpFromRestoredStrats(legacyJump);
             if (!removed) {
-                sendChatError("Converted, but failed to remove the legacy entry from RestoredStrats.");
+                ChatUtils.error("Converted, but failed to remove the legacy entry from RestoredStrats.");
             } else {
-                sendChatInfo("Converted and removed legacy entry from RestoredStrats.");
+                ChatUtils.info("Converted and removed legacy entry from RestoredStrats.");
             }
 
             Minecraft.getMinecraft().displayGuiScreen(parent);
@@ -506,23 +430,4 @@ public class GuiConvertLegacy extends GuiScreen {
         super.actionPerformed(button);
     }
 
-    private static String safe(String s) {
-        return (s != null) ? s.trim() : "";
-    }
-
-    private static void sendChatError(String msg) {
-        Minecraft mc = Minecraft.getMinecraft();
-        if (mc == null || mc.thePlayer == null) return;
-        mc.thePlayer.addChatMessage(new ChatComponentText(
-                EnumChatFormatting.DARK_AQUA + "[ParkourStrats] " + EnumChatFormatting.RED + msg
-        ));
-    }
-
-    private static void sendChatInfo(String msg) {
-        Minecraft mc = Minecraft.getMinecraft();
-        if (mc == null || mc.thePlayer == null) return;
-        mc.thePlayer.addChatMessage(new ChatComponentText(
-                EnumChatFormatting.DARK_AQUA + "[ParkourStrats] " + EnumChatFormatting.AQUA + msg
-        ));
-    }
 }

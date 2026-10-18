@@ -3,12 +3,15 @@ package me.texyle.startreminders.gui.hierarchy;
 import java.io.IOException;
 import java.util.ArrayList;
 
-import me.texyle.startreminders.data.ParkourMap;
-import me.texyle.startreminders.data.ServerProfile;
-import me.texyle.startreminders.reminders.ReminderManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
+
+import me.texyle.startreminders.data.ParkourMap;
+import me.texyle.startreminders.data.ServerProfile;
+import me.texyle.startreminders.persistence.BuiltinContainers;
+import me.texyle.startreminders.reminders.SelectionState;
+import me.texyle.startreminders.services.ServerService;
 
 public class GuiServerList extends GuiScreen {
 
@@ -67,11 +70,11 @@ public class GuiServerList extends GuiScreen {
                         String id = item.getId() != null ? item.getId() : "<null>";
 
                         // Custom colors for protected servers
-                        if (ReminderManager.isProtectedServer(item)) {
-                            if (ReminderManager.isGlobalServer(item) || "Global".equals(id)) {
+                        if (BuiltinContainers.isProtectedServer(item)) {
+                            if (BuiltinContainers.isGlobalServer(item) || "Global".equals(id)) {
                                 return "\u00A7a" + id + "\u00A7r"; // green
                             }
-                            if (ReminderManager.isRestoredServer(item) || "RestoredStrats".equals(id)) {
+                            if (BuiltinContainers.isRestoredServer(item) || "RestoredStrats".equals(id)) {
                                 return "\u00A7e" + id + "\u00A7r"; // yellow
                             }
 
@@ -94,7 +97,7 @@ public class GuiServerList extends GuiScreen {
                             return;
                         }
 
-                        ReminderManager.setSelectedServer(selected);
+                        SelectionState.setSelectedServer(selected);
 
                         // Picker mode: return selection to caller
                         if (pickHandler != null) {
@@ -105,17 +108,11 @@ public class GuiServerList extends GuiScreen {
 
                         // Default mode:
                         // Protected servers (Global / RestoredStrats) -> open jumps directly (skip maps)
-                        if (ReminderManager.isProtectedServer(selected)) {
-                            ParkourMap targetMap = null;
-
-                            if (ReminderManager.isGlobalServer(selected)) {
-                                targetMap = ReminderManager.getGlobalMap();
-                            } else if (ReminderManager.isRestoredServer(selected)) {
-                                targetMap = ReminderManager.getRestoredMap();
-                            }
+                        if (BuiltinContainers.isProtectedServer(selected)) {
+                            ParkourMap targetMap = BuiltinContainers.getForcedMap(selected);
 
                             if (targetMap != null) {
-                                ReminderManager.setSelectedMap(targetMap);
+                                SelectionState.setSelectedMap(targetMap);
                                 Minecraft.getMinecraft().displayGuiScreen(new GuiJumpList(GuiServerList.this, targetMap));
                                 return;
                             }
@@ -166,7 +163,7 @@ public class GuiServerList extends GuiScreen {
     }
 
     private void refreshData() {
-        servers = new ArrayList<ServerProfile>(ReminderManager.getServers());
+        servers = new ArrayList<ServerProfile>(ServerService.getServers());
 
         // IMPORTANT:
         // When this screen is used as a "picker" (e.g., creating a new jump),
@@ -176,7 +173,7 @@ public class GuiServerList extends GuiScreen {
         if (isPicker && !allowRestoredInPicker && servers != null) {
             for (int i = servers.size() - 1; i >= 0; i--) {
                 ServerProfile s = servers.get(i);
-                if (s != null && ReminderManager.isRestoredServer(s)) {
+                if (s != null && BuiltinContainers.isRestoredServer(s)) {
                     servers.remove(i);
                 }
             }
@@ -194,7 +191,7 @@ public class GuiServerList extends GuiScreen {
         ServerProfile sel = (list != null) ? list.getSelectedItem() : null;
         boolean hasSelection = sel != null;
 
-        boolean isProtected = (sel != null && ReminderManager.isProtectedServer(sel));
+        boolean isProtected = (sel != null && BuiltinContainers.isProtectedServer(sel));
 
         if (editButton != null) editButton.enabled = hasSelection && !isProtected;
         if (removeButton != null) removeButton.enabled = hasSelection && !isProtected;
@@ -248,7 +245,7 @@ public class GuiServerList extends GuiScreen {
                     new GuiTextPrompt.IResultHandler() {
                         @Override
                         public void onConfirm(String text) {
-                            ReminderManager.createServer(text);
+                            ServerService.createServer(text);
                             initGui();
                         }
 
@@ -265,7 +262,7 @@ public class GuiServerList extends GuiScreen {
         }
 
         // Protect Global and RestoredStrats from edit/remove
-        if (ReminderManager.isProtectedServer(selected)) {
+        if (BuiltinContainers.isProtectedServer(selected)) {
             return;
         }
 
@@ -277,7 +274,7 @@ public class GuiServerList extends GuiScreen {
                     new GuiTextPrompt.IResultHandler() {
                         @Override
                         public void onConfirm(String text) {
-                            ReminderManager.renameServer(selected, text);
+                            ServerService.renameServer(selected, text);
                             initGui();
                         }
 
@@ -296,7 +293,7 @@ public class GuiServerList extends GuiScreen {
                     new GuiConfirm.IConfirmHandler() {
                         @Override
                         public void onYes() {
-                            ReminderManager.removeServer(selected);
+                            ServerService.removeServer(selected);
                             initGui();
                         }
 

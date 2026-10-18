@@ -2,9 +2,10 @@ package me.texyle.startreminders.gui.convert;
 
 import java.util.ArrayList;
 
+import net.minecraft.client.gui.FontRenderer;
+
 import me.texyle.startreminders.data.Jump;
 import me.texyle.startreminders.reminders.Reminder;
-import net.minecraft.client.gui.FontRenderer;
 
 public class GuiLegacyPreviewPanel {
 

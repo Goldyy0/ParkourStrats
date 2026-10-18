@@ -1,10 +1,5 @@
 package me.texyle.startreminders;
 
-import org.lwjgl.input.Keyboard;
-
-import me.texyle.startreminders.gui.GuiHandler;
-import me.texyle.startreminders.proxy.CommonProxy;
-import me.texyle.startreminders.reminders.ReminderManager;
 import net.minecraft.client.settings.KeyBinding;
 import net.minecraftforge.fml.client.registry.ClientRegistry;
 import net.minecraftforge.fml.common.Mod;
@@ -13,6 +8,12 @@ import net.minecraftforge.fml.common.event.FMLInitializationEvent;
 import net.minecraftforge.fml.common.event.FMLPostInitializationEvent;
 import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
 import net.minecraftforge.fml.common.network.NetworkRegistry;
+import org.lwjgl.input.Keyboard;
+
+import me.texyle.startreminders.gui.GuiHandler;
+import me.texyle.startreminders.persistence.DataStoreRepository;
+import me.texyle.startreminders.proxy.CommonProxy;
+import me.texyle.startreminders.reminders.DefaultContextSelector;
 
 @Mod(modid=Reference.MOD_ID,name=Reference.NAME, version=Reference.VERSION)
 public class StratReminders {
@@ -51,6 +52,7 @@ public class StratReminders {
 
 	@Mod.EventHandler
 	public void postInit(FMLPostInitializationEvent  event) {
-		ReminderManager.loadFromFile();
+		DataStoreRepository.ensureLoaded();
+		DefaultContextSelector.autoSelectDefaultContext();
 	}
 }

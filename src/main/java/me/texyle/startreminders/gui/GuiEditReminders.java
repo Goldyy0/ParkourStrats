@@ -3,22 +3,24 @@ package me.texyle.startreminders.gui;
 import java.io.IOException;
 import java.util.ArrayList;
 
-import me.texyle.startreminders.data.Jump;
-import me.texyle.startreminders.data.ParkourMap;
-import me.texyle.startreminders.data.ServerProfile;
-import me.texyle.startreminders.gui.hierarchy.GuiJumpList;
-import me.texyle.startreminders.reminders.Reminder;
-import me.texyle.startreminders.reminders.ReminderManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.util.ChatComponentText;
 import net.minecraft.util.EnumChatFormatting;
 import net.minecraft.util.ResourceLocation;
-import net.minecraft.client.renderer.GlStateManager;
+
+import me.texyle.startreminders.data.Jump;
+import me.texyle.startreminders.data.ParkourMap;
+import me.texyle.startreminders.gui.hierarchy.GuiJumpList;
+import me.texyle.startreminders.persistence.DataStoreRepository;
+import me.texyle.startreminders.reminders.JumpPicker;
+import me.texyle.startreminders.reminders.Reminder;
+import me.texyle.startreminders.reminders.SelectionState;
+import me.texyle.startreminders.reminders.UserPreferences;
+import me.texyle.startreminders.services.StrategyService;
+import me.texyle.startreminders.utils.ChatUtils;
 
 public class GuiEditReminders extends GuiCreateReminder {
-
-	private static final String RESTORED_ID = "RestoredStrats";
 
 	private static final int BTN_TOGGLE_JUMP_NAME = 31;
 	private static final int BTN_TOGGLE_PICK_MODE = 32;
@@ -51,7 +53,7 @@ public class GuiEditReminders extends GuiCreateReminder {
 	private String numStr;
 
 	private ResourceLocation getJumpNameToggleIcon() {
-		boolean show = ReminderManager.isGlobalShowJumpNameEnabled();
+		boolean show = UserPreferences.isGlobalShowJumpNameEnabled();
 		return show ? JUMP_NAME_VISIBLE_ICON : JUMP_NAME_HIDDEN_ICON;
 	}
 
@@ -60,7 +62,7 @@ public class GuiEditReminders extends GuiCreateReminder {
 			return;
 		}
 
-		boolean enabled = !isRestoredContextLocal();
+		boolean enabled = !SelectionState.isRestoredContext();
 		toggleJumpNameButton.enabled = enabled;
 
 		if (toggleJumpNameButton instanceof IconSquareButton) {
@@ -73,7 +75,7 @@ public class GuiEditReminders extends GuiCreateReminder {
 			return;
 		}
 
-		boolean crosshair = ReminderManager.isEditPickModeInCrosshair();
+		boolean crosshair = UserPreferences.isEditPickModeInCrosshair();
 		buttonPickMode.displayString = crosshair ? "In crosshair" : "Nearest";
 	}
 
@@ -95,19 +97,19 @@ public class GuiEditReminders extends GuiCreateReminder {
 				this.abortOpen = true;
 				return;
 			}
-		} else if (ReminderManager.getSelectedJump() == null) {
-			ReminderManager.selectNearestJumpToPlayer();
+		} else if (SelectionState.getSelectedJump() == null) {
+			JumpPicker.selectNearestJumpToPlayer();
 		}
 
 		// Build list from current selection
-		reminderList = new ArrayList<Reminder>(ReminderManager.getReminderList());
+		reminderList = new ArrayList<Reminder>(StrategyService.getReminderList());
 		if (reminderList == null || reminderList.isEmpty()) {
 			// No strategies yet -> go to Create screen for the currently selected jump.
 			Minecraft.getMinecraft().displayGuiScreen(new GuiCreateReminder(parentScreen));
 			return;
 		}
 
-		Jump jump = ReminderManager.getSelectedJump();
+		Jump jump = SelectionState.getSelectedJump();
 		int startIdx = 0;
 		if (jump != null) {
 			int active = jump.getActiveReminderIndex();
@@ -121,28 +123,16 @@ public class GuiEditReminders extends GuiCreateReminder {
 		selectedReminder = reminderList.get(startIdx);
 	}
 
-	private static boolean isBlank(String s) {
-		return s == null || s.trim().isEmpty();
-	}
-
-	private static boolean isBetterLcEightLine(ArrayList<String> lines) {
-		if (lines == null || lines.size() < NEW_FMT_SIZE) return false;
-
-		// BetterLC: Position/Facing are meaningful (at least one non-empty)
-		return !isBlank(getLineSafe(lines, 0)) || !isBlank(getLineSafe(lines, 1));
-	}
-
 	private boolean pickJumpByModeForKeybindOpen() {
-		boolean crosshair = ReminderManager.isEditPickModeInCrosshair();
+		boolean crosshair = UserPreferences.isEditPickModeInCrosshair();
 		if (!crosshair) {
-			ReminderManager.selectNearestJumpToPlayer();
-			return ReminderManager.getSelectedJump() != null;
+			JumpPicker.selectNearestJumpToPlayer();
+			return SelectionState.getSelectedJump() != null;
 		}
 
-		Jump picked = ReminderManager.selectJumpInCrosshair(50.0D, 1.75D);
+		Jump picked = JumpPicker.selectJumpInCrosshair(50.0D, 1.75D);
 		if (picked == null) {
-			String str = EnumChatFormatting.DARK_AQUA + "[ParkourStrats] "
-					+ EnumChatFormatting.YELLOW + "No strategies in visible range.";
+			String str = ChatUtils.WARNING_PREFIX + "No strategies in visible range.";
 			ChatComponentText msg = new ChatComponentText(str);
 			if (Minecraft.getMinecraft().thePlayer != null) {
 				Minecraft.getMinecraft().thePlayer.addChatMessage(msg);
@@ -156,11 +146,10 @@ public class GuiEditReminders extends GuiCreateReminder {
 	}
 
 	private void reloadFromSelectionOrFallback(boolean announceIfNone) {
-		reminderList = new ArrayList<Reminder>(ReminderManager.getReminderList());
+		reminderList = new ArrayList<Reminder>(StrategyService.getReminderList());
 		if (reminderList == null || reminderList.isEmpty()) {
 			if (announceIfNone) {
-				String str = EnumChatFormatting.DARK_AQUA + "[ParkourStrats] "
-						+ EnumChatFormatting.YELLOW + "No strategies in visible range.";
+				String str = ChatUtils.WARNING_PREFIX + "No strategies in visible range.";
 				ChatComponentText msg = new ChatComponentText(str);
 				if (Minecraft.getMinecraft().thePlayer != null) {
 					Minecraft.getMinecraft().thePlayer.addChatMessage(msg);
@@ -168,15 +157,15 @@ public class GuiEditReminders extends GuiCreateReminder {
 			}
 
 			// If we ended up with empty list, fallback to nearest and try again
-			ReminderManager.selectNearestJumpToPlayer();
-			reminderList = new ArrayList<Reminder>(ReminderManager.getReminderList());
+			JumpPicker.selectNearestJumpToPlayer();
+			reminderList = new ArrayList<Reminder>(StrategyService.getReminderList());
 			if (reminderList == null || reminderList.isEmpty()) {
 				Minecraft.getMinecraft().displayGuiScreen(new GuiCreateReminder(parentScreen));
 				return;
 			}
 		}
 
-		Jump jump = ReminderManager.getSelectedJump();
+		Jump jump = SelectionState.getSelectedJump();
 		int startIdx = 0;
 		if (jump != null) {
 			int active = jump.getActiveReminderIndex();
@@ -252,7 +241,7 @@ public class GuiEditReminders extends GuiCreateReminder {
 		switchMenuButton.id = 17;
 
 		// Add toggle button for showing jump name in-world (NEW editor only)
-		if (!isRestoredContextLocal()) {
+		if (!SelectionState.isRestoredContext()) {
 			int x = getFieldX() - ICON_BTN_SIZE - 2;  // "next to Jump:" (left of the yellow jump id text)
 			int y = getRowY(2) - 1;
 
@@ -274,9 +263,9 @@ public class GuiEditReminders extends GuiCreateReminder {
 			return;
 		}
 
-		boolean hasValidCoordinates = canParseInt(textX) && canParseInt(textY) && canParseInt(textZ);
+		boolean hasValidCoordinates = FormFields.canParseInt(textX) && FormFields.canParseInt(textY) && FormFields.canParseInt(textZ);
 
-		if (isRestoredContextLocal()) {
+		if (SelectionState.isRestoredContext()) {
 			// RestoredStrats editor: coordinates-only requirement.
 			saveButton.enabled = hasValidCoordinates;
 			return;
@@ -284,14 +273,14 @@ public class GuiEditReminders extends GuiCreateReminder {
 
 		// New mode editor: no required fields, but at least one must be non-empty.
 		boolean hasAnyText =
-				hasText(textPosition) ||
-						hasText(textFacing) ||
-						hasText(textSetup) ||
-						hasText(textStrategy) ||
-						hasText(textStrafe) ||
-						hasText(textTurn) ||
-						hasText(textAuthor) ||
-						hasText(textTips);
+				FormFields.hasText(textPosition) ||
+						FormFields.hasText(textFacing) ||
+						FormFields.hasText(textSetup) ||
+						FormFields.hasText(textStrategy) ||
+						FormFields.hasText(textStrafe) ||
+						FormFields.hasText(textTurn) ||
+						FormFields.hasText(textAuthor) ||
+						FormFields.hasText(textTips);
 
 		saveButton.enabled = hasValidCoordinates && hasAnyText;
 	}
@@ -318,63 +307,17 @@ public class GuiEditReminders extends GuiCreateReminder {
 		}
 	}
 
-	private boolean isRestoredContextLocal() {
-		ServerProfile s = ReminderManager.getSelectedServer();
-		if (s != null && RESTORED_ID.equals(s.getId())) {
-			return true;
-		}
-
-		ParkourMap m = ReminderManager.getSelectedMap();
-		return m != null && RESTORED_ID.equals(m.getId());
-	}
-
 	private void fillFieldsFromReminder() {
 		ArrayList<String> lines = (selectedReminder != null) ? selectedReminder.lines : null;
 
-		if (isRestoredContextLocal()) {
-			/*
-			 * RestoredStrats editor uses legacy UI (Line 1..5), BUT:
-			 * - If data is already in new 8-line format, we want to start from "Setup" (index 2)
-			 *   so user sees values from Line 1, not Line 3.
-			 * - If data is old/legacy (<8), show it as-is (0..4) for viewing/editing.
-			 */
-			boolean isNewFormat = (lines != null && lines.size() >= NEW_FMT_SIZE);
-
-			if (isNewFormat) {
-				/*
-				 * RestoredStrats can contain TWO kinds of 8-line data:
-				 * 1) BetterLC 8-line: [Position, Facing, Setup, Strategy(Input), Strafe, Turn, Author, Tips(Comment)]
-				 * 2) Legacy-normalized 8-line (converted from old formats): Position/Facing typically empty.
-				 *
-				 * If Position/Facing are empty -> treat as legacy-normalized and show from Setup so it starts at Line 1.
-				 */
-				boolean betterLc = isBetterLcEightLine(lines);
-
-				if (betterLc) {
-					// BetterLC display mapping:
-					// Line1=Position(0), Line2=Facing(1), Line3=Setup(2), Line4=Input(3), Line5=Comment(7)
-					textLine1.setText(getLineSafe(lines, 0)); // Position
-					textLine2.setText(getLineSafe(lines, 1)); // Facing
-					textLine3.setText(getLineSafe(lines, 2)); // Setup
-					textLine4.setText(getLineSafe(lines, 3)); // Input (Strategy)
-					textLine5.setText(getLineSafe(lines, 7)); // Comment (Tips)
-				} else {
-					// Legacy-normalized 8-line display mapping (start at Setup):
-					// Line1=Setup(2), Line2=Strategy(3), Line3=Strafe(4), Line4=Turn(5), Line5=Tips(7)
-					textLine1.setText(getLineSafe(lines, 2));
-					textLine2.setText(getLineSafe(lines, 3));
-					textLine3.setText(getLineSafe(lines, 4));
-					textLine4.setText(getLineSafe(lines, 5));
-					textLine5.setText(getLineSafe(lines, 7));
-				}
-			} else {
-				// Original legacy: show lines[0..4] as Line 1..5
-				textLine1.setText(getLineSafe(lines, 0));
-				textLine2.setText(getLineSafe(lines, 1));
-				textLine3.setText(getLineSafe(lines, 2));
-				textLine4.setText(getLineSafe(lines, 3));
-				textLine5.setText(getLineSafe(lines, 4));
-			}
+		if (SelectionState.isRestoredContext()) {
+			// RestoredStrats editor uses the generic Line 1..5 UI; see StrategyFormat for the mapping.
+			String[] v = StrategyFormat.restoredEditorLines(lines);
+			textLine1.setText(v[0]);
+			textLine2.setText(v[1]);
+			textLine3.setText(v[2]);
+			textLine4.setText(v[3]);
+			textLine5.setText(v[4]);
 
 		} else {
 			// New mode defaults
@@ -396,34 +339,34 @@ public class GuiEditReminders extends GuiCreateReminder {
 			 */
 			if (lines != null) {
 				if (lines.size() >= 8) {
-					textPosition.setText(nullSafe(lines.get(0)));
-					textFacing.setText(nullSafe(lines.get(1)));
+					textPosition.setText(StrategyFormat.orEmpty(lines.get(0)));
+					textFacing.setText(StrategyFormat.orEmpty(lines.get(1)));
 
-					textSetup.setText(nullSafe(lines.get(2)));
-					textStrategy.setText(nullSafe(lines.get(3)));
-					textStrafe.setText(nullSafe(lines.get(4)));
-					textTurn.setText(nullSafe(lines.get(5)));
-					textAuthor.setText(nullSafe(lines.get(6)));
-					textTips.setText(nullSafe(lines.get(7)));
+					textSetup.setText(StrategyFormat.orEmpty(lines.get(2)));
+					textStrategy.setText(StrategyFormat.orEmpty(lines.get(3)));
+					textStrafe.setText(StrategyFormat.orEmpty(lines.get(4)));
+					textTurn.setText(StrategyFormat.orEmpty(lines.get(5)));
+					textAuthor.setText(StrategyFormat.orEmpty(lines.get(6)));
+					textTips.setText(StrategyFormat.orEmpty(lines.get(7)));
 				} else if (lines.size() >= 6) {
-					textSetup.setText(nullSafe(lines.get(0)));
-					textStrategy.setText(nullSafe(lines.get(1)));
-					textStrafe.setText(nullSafe(lines.get(2)));
-					textTurn.setText(nullSafe(lines.get(3)));
-					textAuthor.setText(nullSafe(lines.get(4)));
-					textTips.setText(nullSafe(lines.get(5)));
+					textSetup.setText(StrategyFormat.orEmpty(lines.get(0)));
+					textStrategy.setText(StrategyFormat.orEmpty(lines.get(1)));
+					textStrafe.setText(StrategyFormat.orEmpty(lines.get(2)));
+					textTurn.setText(StrategyFormat.orEmpty(lines.get(3)));
+					textAuthor.setText(StrategyFormat.orEmpty(lines.get(4)));
+					textTips.setText(StrategyFormat.orEmpty(lines.get(5)));
 				} else {
-					if (lines.size() > 0) textStrategy.setText(nullSafe(lines.get(0)));
-					if (lines.size() > 1) textStrafe.setText(nullSafe(lines.get(1)));
-					if (lines.size() > 2) textTurn.setText(nullSafe(lines.get(2)));
-					if (lines.size() > 3) textAuthor.setText(nullSafe(lines.get(3)));
-					if (lines.size() > 4) textTips.setText(nullSafe(lines.get(4)));
+					if (lines.size() > 0) textStrategy.setText(StrategyFormat.orEmpty(lines.get(0)));
+					if (lines.size() > 1) textStrafe.setText(StrategyFormat.orEmpty(lines.get(1)));
+					if (lines.size() > 2) textTurn.setText(StrategyFormat.orEmpty(lines.get(2)));
+					if (lines.size() > 3) textAuthor.setText(StrategyFormat.orEmpty(lines.get(3)));
+					if (lines.size() > 4) textTips.setText(StrategyFormat.orEmpty(lines.get(4)));
 				}
 			}
 		}
 
 		// Jump fields: ONLY Coordinates are shared at jump level.
-		Jump jump = ReminderManager.getSelectedJump();
+		Jump jump = SelectionState.getSelectedJump();
 		if (jump != null) {
 			textX.setText("" + jump.getX());
 			textY.setText("" + jump.getY());
@@ -445,7 +388,7 @@ public class GuiEditReminders extends GuiCreateReminder {
 			return;
 		}
 
-		Jump jump = ReminderManager.getSelectedJump();
+		Jump jump = SelectionState.getSelectedJump();
 		if (jump == null || jump.getReminders() == null || jump.getReminders().isEmpty() || selectedReminder == null) {
 			buttonSelect.enabled = false;
 			buttonSelect.displayString = "Select";
@@ -464,25 +407,6 @@ public class GuiEditReminders extends GuiCreateReminder {
 		}
 	}
 
-	private static String nullSafe(String s) {
-		return s != null ? s : "";
-	}
-
-	private static String getLineSafe(ArrayList<String> lines, int idx) {
-		if (lines == null || idx < 0 || idx >= lines.size()) {
-			return "";
-		}
-		String s = lines.get(idx);
-		return s != null ? s : "";
-	}
-
-	private static void ensureSize(ArrayList<String> lines, int size) {
-		if (lines == null) return;
-		while (lines.size() < size) {
-			lines.add("");
-		}
-	}
-
 	@Override
 	protected void actionPerformed(GuiButton button) throws IOException {
 		if (button != null && button.id == BTN_USE_PLAYER_COORDS) {
@@ -491,27 +415,17 @@ public class GuiEditReminders extends GuiCreateReminder {
 		}
 
 		if (button != null && button.id == BTN_TOGGLE_JUMP_NAME) {
-			if (!isRestoredContextLocal()) {
-				boolean cur = ReminderManager.isGlobalShowJumpNameEnabled();
-				ReminderManager.setGlobalShowJumpNameEnabled(!cur);
-				updateJumpNameToggleButtonState();
-			}
+			onToggleJumpName();
 			return;
 		}
 
 		if (button != null && button.id == BTN_TOGGLE_PICK_MODE) {
-			boolean cur = ReminderManager.isEditPickModeInCrosshair();
-			boolean next = !cur;
-			ReminderManager.setEditPickModeInCrosshair(next);
-
-			// IMPORTANT: Do not auto-pick anything while already inside the menu.
-			// This toggle only changes the mode for the NEXT time the menu is opened via keybind.
-			updatePickModeButtonText();
+			onTogglePickMode();
 			return;
 		}
 
 		if (button.id == 21) {
-			ParkourMap map = ReminderManager.getSelectedMap();
+			ParkourMap map = SelectionState.getSelectedMap();
 			if (map != null) {
 				Minecraft.getMinecraft().displayGuiScreen(new GuiJumpList(parentScreen, map));
 			} else {
@@ -521,20 +435,12 @@ public class GuiEditReminders extends GuiCreateReminder {
 		}
 
 		if (button.id == buttonLeft.id) {
-			if (selectedIndex > 1) {
-				selectedReminder = reminderList.get(--selectedIndex - 1);
-				numStr = selectedIndex + "/" + reminderList.size();
-				fillFieldsFromReminder();
-			}
+			showStrategy(selectedIndex - 1);
 			return;
 		}
 
 		if (button.id == buttonRight.id) {
-			if (selectedIndex < reminderList.size()) {
-				selectedReminder = reminderList.get(++selectedIndex - 1);
-				numStr = selectedIndex + "/" + reminderList.size();
-				fillFieldsFromReminder();
-			}
+			showStrategy(selectedIndex + 1);
 			return;
 		}
 
@@ -544,34 +450,12 @@ public class GuiEditReminders extends GuiCreateReminder {
 		}
 
 		if (buttonSelect != null && button.id == buttonSelect.id) {
-			if (selectedReminder != null) {
-				ReminderManager.setActiveReminder(selectedReminder);
-
-				String str = EnumChatFormatting.DARK_AQUA + "[ParkourStrats] "
-						+ EnumChatFormatting.AQUA + "Selected strategy";
-				ChatComponentText message = new ChatComponentText(str);
-				if (Minecraft.getMinecraft().thePlayer != null) {
-					Minecraft.getMinecraft().thePlayer.addChatMessage(message);
-				}
-			}
-
-			updateSelectButtonState();
+			onSelectStrategy();
 			return;
 		}
 
 		if (button.id == buttonDelete.id) {
-			ReminderManager.deleteReminder(selectedReminder);
-
-			reminderList = new ArrayList<Reminder>(ReminderManager.getReminderList());
-			if (reminderList == null || reminderList.isEmpty()) {
-				Minecraft.getMinecraft().displayGuiScreen(new GuiCreateReminder(parentScreen));
-				return;
-			}
-
-			selectedIndex = 1;
-			numStr = selectedIndex + "/" + reminderList.size();
-			selectedReminder = reminderList.get(0);
-			fillFieldsFromReminder();
+			onDeleteStrategy();
 			return;
 		}
 
@@ -583,6 +467,56 @@ public class GuiEditReminders extends GuiCreateReminder {
 		super.actionPerformed(button);
 	}
 
+	private void onToggleJumpName() {
+		if (!SelectionState.isRestoredContext()) {
+			boolean cur = UserPreferences.isGlobalShowJumpNameEnabled();
+			UserPreferences.setGlobalShowJumpNameEnabled(!cur);
+			updateJumpNameToggleButtonState();
+		}
+	}
+
+	private void onTogglePickMode() {
+		boolean cur = UserPreferences.isEditPickModeInCrosshair();
+		UserPreferences.setEditPickModeInCrosshair(!cur);
+
+		// IMPORTANT: Do not auto-pick anything while already inside the menu.
+		// This toggle only changes the mode for the NEXT time the menu is opened via keybind.
+		updatePickModeButtonText();
+	}
+
+	/** Shows the strategy with the given 1-based position, if it exists. */
+	private void showStrategy(int newIndexOneBased) {
+		if (newIndexOneBased < 1 || newIndexOneBased > reminderList.size()) {
+			return;
+		}
+
+		selectedIndex = newIndexOneBased;
+		selectedReminder = reminderList.get(selectedIndex - 1);
+		numStr = selectedIndex + "/" + reminderList.size();
+		fillFieldsFromReminder();
+	}
+
+	private void onSelectStrategy() {
+		if (selectedReminder != null) {
+			StrategyService.setActiveReminder(selectedReminder);
+			ChatUtils.info("Selected strategy");
+		}
+
+		updateSelectButtonState();
+	}
+
+	private void onDeleteStrategy() {
+		StrategyService.deleteReminder(selectedReminder);
+
+		reminderList = new ArrayList<Reminder>(StrategyService.getReminderList());
+		if (reminderList.isEmpty()) {
+			Minecraft.getMinecraft().displayGuiScreen(new GuiCreateReminder(parentScreen));
+			return;
+		}
+
+		showStrategy(1);
+	}
+
 	private void updateReminder() {
 		if (saveButton != null && !saveButton.enabled) {
 			return;
@@ -592,139 +526,44 @@ public class GuiEditReminders extends GuiCreateReminder {
 		int y = Integer.parseInt(textY.getText().trim());
 		int z = Integer.parseInt(textZ.getText().trim());
 
-		ArrayList<String> out = new ArrayList<String>();
+		ArrayList<String> out;
 
-		if (isRestoredContextLocal()) {
-			/*
-			 * RestoredStrats editor:
-			 * Always save using the new 8-line format so the renderer and table interpret it correctly.
-			 * UI Line1..Line5 maps to:
-			 *  - Setup, Strategy, Strafe, Turn, Tips
-			 * Author is not edited here -> keep existing author if possible, otherwise empty.
-			 * Position/Facing are not edited here -> keep existing if possible, otherwise empty.
-			 */
+		if (SelectionState.isRestoredContext()) {
 			ArrayList<String> existing = (selectedReminder != null) ? selectedReminder.lines : null;
-			boolean isNewFormat = (existing != null && existing.size() >= NEW_FMT_SIZE);
-
-			if (isNewFormat) {
-				out = new ArrayList<String>(existing);
-				ensureSize(out, NEW_FMT_SIZE);
-
-				boolean betterLc = isBetterLcEightLine(existing);
-
-				if (betterLc) {
-					// BetterLC save mapping (same as display mapping)
-					out.set(0, safe(textLine1.getText())); // Position
-					out.set(1, safe(textLine2.getText())); // Facing
-					out.set(2, safe(textLine3.getText())); // Setup
-					out.set(3, safe(textLine4.getText())); // Input (Strategy)
-					out.set(7, safe(textLine5.getText())); // Comment (Tips)
-					// Preserve Strafe(4), Turn(5), Author(6)
-				} else {
-					// Legacy-normalized 8-line: keep it in "setup-start" mapping
-					out.set(2, safe(textLine1.getText())); // Setup
-					out.set(3, safe(textLine2.getText())); // Strategy
-					out.set(4, safe(textLine3.getText())); // Strafe
-					out.set(5, safe(textLine4.getText())); // Turn
-					out.set(7, safe(textLine5.getText())); // Tips
-					// Preserve Position(0), Facing(1), Author(6) (usually empty, but keep)
-				}
-			} else {
-				/*
-				 * Converting original legacy (<8) to 8-line:
-				 * IMPORTANT: treat as legacy-normalized (setup-start), NOT BetterLC.
-				 */
-				out.add(""); // Position
-				out.add(""); // Facing
-
-				out.add(safe(textLine1.getText())); // Setup
-				out.add(safe(textLine2.getText())); // Strategy
-				out.add(safe(textLine3.getText())); // Strafe
-				out.add(safe(textLine4.getText())); // Turn
-				out.add("");                        // Author
-				out.add(safe(textLine5.getText())); // Tips
-			}
-
+			out = StrategyFormat.applyRestoredEdit(existing,
+					FormFields.trimmed(textLine1.getText()),
+					FormFields.trimmed(textLine2.getText()),
+					FormFields.trimmed(textLine3.getText()),
+					FormFields.trimmed(textLine4.getText()),
+					FormFields.trimmed(textLine5.getText()));
 		} else {
 			// New format: [Position, Facing, Setup, Strategy, Strafe, Turn, Author, Tips]
-			out.add(safe(textPosition.getText()));
-			out.add(safe(textFacing.getText()));
+			out = new ArrayList<String>();
+			out.add(FormFields.trimmed(textPosition.getText()));
+			out.add(FormFields.trimmed(textFacing.getText()));
 
-			out.add(safe(textSetup.getText()));
-			out.add(safe(textStrategy.getText()));
-			out.add(safe(textStrafe.getText()));
-			out.add(safe(textTurn.getText()));
-			out.add(safe(textAuthor.getText()));
-			out.add(safe(textTips.getText()));
+			out.add(FormFields.trimmed(textSetup.getText()));
+			out.add(FormFields.trimmed(textStrategy.getText()));
+			out.add(FormFields.trimmed(textStrafe.getText()));
+			out.add(FormFields.trimmed(textTurn.getText()));
+			out.add(FormFields.trimmed(textAuthor.getText()));
+			out.add(FormFields.trimmed(textTips.getText()));
 		}
 
 		selectedReminder.lines = out;
 
 		// Persist ONLY jump-level coordinates (shared within jump container).
-		Jump jump = ReminderManager.getSelectedJump();
+		Jump jump = SelectionState.getSelectedJump();
 		if (jump != null) {
 			jump.setX(x);
 			jump.setY(y);
 			jump.setZ(z);
 		}
 
-		String str = EnumChatFormatting.DARK_AQUA + "[ParkourStrats] ";
-		str += EnumChatFormatting.AQUA + "Strategy updated";
-		ChatComponentText message = new ChatComponentText(str);
-
-		if (Minecraft.getMinecraft().thePlayer != null) {
-			Minecraft.getMinecraft().thePlayer.addChatMessage(message);
-		}
+		ChatUtils.info("Strategy updated");
 
 		Minecraft.getMinecraft().displayGuiScreen(null);
-		ReminderManager.saveToFile();
+		DataStoreRepository.save();
 	}
 
-	// Put this at the end of GuiEditReminders.java (inside the class)
-	private static final class IconSquareButton extends GuiButton {
-
-		private ResourceLocation icon;
-		private final int iconSize; // in pixels, e.g. 16
-
-		public IconSquareButton(int buttonId, int x, int y, int widthIn, int heightIn, ResourceLocation icon) {
-			super(buttonId, x, y, widthIn, heightIn, "");
-			this.icon = icon;
-			this.iconSize = 16;
-		}
-
-		public void setIcon(ResourceLocation icon) {
-			this.icon = icon;
-		}
-
-		@Override
-		public void drawButton(Minecraft mc, int mouseX, int mouseY) {
-			if (!this.visible) return;
-
-			this.hovered = mouseX >= this.xPosition && mouseY >= this.yPosition
-					&& mouseX < this.xPosition + this.width
-					&& mouseY < this.yPosition + this.height;
-
-			if (icon == null) return;
-
-			GlStateManager.pushMatrix();
-			try {
-				GlStateManager.disableLighting();
-				GlStateManager.disableDepth();
-				GlStateManager.enableBlend();
-				GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0); // standard GUI blend
-				GlStateManager.color(1f, 1f, 1f, 1f);
-
-				mc.getTextureManager().bindTexture(icon);
-
-				int ix = this.xPosition + (this.width - iconSize) / 2;
-				int iy = this.yPosition + (this.height - iconSize) / 2;
-
-				drawModalRectWithCustomSizedTexture(ix, iy, 0f, 0f, iconSize, iconSize, 16f, 16f);
-			} finally {
-				GlStateManager.disableBlend();
-				GlStateManager.enableDepth();
-				GlStateManager.popMatrix();
-			}
-		}
-	}
 }

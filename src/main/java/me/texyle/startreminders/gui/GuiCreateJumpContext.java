@@ -3,6 +3,12 @@ package me.texyle.startreminders.gui;
 import java.io.IOException;
 import java.util.ArrayList;
 
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiButton;
+import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.client.gui.GuiTextField;
+import net.minecraft.util.EnumChatFormatting;
+
 import me.texyle.startreminders.data.Jump;
 import me.texyle.startreminders.data.MapSection;
 import me.texyle.startreminders.data.ParkourMap;
@@ -10,32 +16,35 @@ import me.texyle.startreminders.data.ServerProfile;
 import me.texyle.startreminders.gui.hierarchy.GuiMapList;
 import me.texyle.startreminders.gui.hierarchy.GuiPickSectionPreview;
 import me.texyle.startreminders.gui.hierarchy.GuiServerList;
+import me.texyle.startreminders.persistence.BuiltinContainers;
+import me.texyle.startreminders.persistence.DataStoreRepository;
 import me.texyle.startreminders.reminders.Reminder;
-import me.texyle.startreminders.reminders.ReminderManager;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.entity.EntityPlayerSP;
-import net.minecraft.client.gui.GuiButton;
-import net.minecraft.client.gui.GuiScreen;
-import net.minecraft.client.gui.GuiTextField;
-import net.minecraft.util.EnumChatFormatting;
+import me.texyle.startreminders.reminders.SelectionState;
+import me.texyle.startreminders.services.JumpService;
+import me.texyle.startreminders.services.SectionLayoutService;
+import me.texyle.startreminders.sheets.PlaceholderSyncService;
+import me.texyle.startreminders.utils.IdRules;
 
 public class GuiCreateJumpContext extends GuiScreen {
 
     private static final int FIELD_WIDTH = 220;
 
     private static final int COLOR_TEXT = 0xFFFFFF;
-    private static final int COLOR_INVALID_OVERLAY = 0x55FF0000;
+
+    // Button IDs
+    private static final int BTN_NEXT = 5;
+    private static final int BTN_PICK_SERVER = 6;
+    private static final int BTN_PICK_MAP = 7;
+    private static final int BTN_CREATE_PLACEHOLDER = 8;
+    private static final int BTN_CONFIGURE_PLACEHOLDER = 9;
+    private static final int BTN_PREV_JUMP = 10;
+    private static final int BTN_NEXT_JUMP = 11;
+    private static final int BTN_PICK_SECTION = 12;
+    private static final int BTN_PREV_SECTION = 13;
+    private static final int BTN_NEXT_SECTION = 14;
+    private static final int BTN_BACK = 20;
 
     private static final String PLACEHOLDER_TEXT = "PLACEHOLDER";
-
-    // ---------------------------------------
-    // Sticky (cached) section selection
-    // ---------------------------------------
-    // Cached per (serverId + mapId) so it only "sticks" for the same context.
-    private static String cachedServerId = null;
-    private static String cachedMapId = null;
-    private static int cachedSectionLevelOneBased = 0; // 0 = none
-    private static String cachedSectionId = null; // MapSection.getId()
 
     private final GuiScreen parent;
 
@@ -77,22 +86,22 @@ public class GuiCreateJumpContext extends GuiScreen {
     public GuiCreateJumpContext(GuiScreen parent) {
         this.parent = parent;
 
-        this.selectedServer = ReminderManager.getSelectedServer();
-        this.selectedMap = ReminderManager.getSelectedMap();
+        this.selectedServer = SelectionState.getSelectedServer();
+        this.selectedMap = SelectionState.getSelectedMap();
 
         if (this.selectedServer == null) {
             this.selectedMap = null;
         }
 
         // Disallow RestoredStrats as context for creating new jumps
-        if (this.selectedServer != null && ReminderManager.isRestoredServer(this.selectedServer)) {
+        if (this.selectedServer != null && BuiltinContainers.isRestoredServer(this.selectedServer)) {
             this.selectedServer = null;
             this.selectedMap = null;
         }
 
         // If server is Global, force global map
-        if (this.selectedServer != null && ReminderManager.isGlobalServer(this.selectedServer)) {
-            this.selectedMap = ReminderManager.getGlobalMap();
+        if (this.selectedServer != null && BuiltinContainers.isGlobalServer(this.selectedServer)) {
+            this.selectedMap = BuiltinContainers.getGlobalMap();
         }
 
         // Try restore cached section selection (only if server+map match)
@@ -102,86 +111,11 @@ public class GuiCreateJumpContext extends GuiScreen {
     private void restoreStickySectionIfPossible() {
         clearSectionSelection();
 
-        if (selectedServer == null || selectedMap == null) {
-            clearStickySectionCache();
-            return;
+        StickySectionCache.Pick pick = StickySectionCache.restore(selectedServer, selectedMap);
+        if (pick != null) {
+            selectedSectionLevelOneBased = pick.levelOneBased;
+            selectedSection = pick.section;
         }
-
-        String sid = safeId(selectedServer.getId());
-        String mid = safeId(selectedMap.getId());
-
-        if (sid.isEmpty() || mid.isEmpty()) {
-            clearStickySectionCache();
-            return;
-        }
-
-        if (!sid.equals(cachedServerId) || !mid.equals(cachedMapId)) {
-            // Different context => do not restore
-            return;
-        }
-
-        if (cachedSectionLevelOneBased < 1 || cachedSectionLevelOneBased > 4) {
-            return;
-        }
-
-        if (cachedSectionId == null || cachedSectionId.trim().isEmpty()) {
-            return;
-        }
-
-        MapSection resolved = findSectionById(selectedMap, cachedSectionLevelOneBased, cachedSectionId);
-        if (resolved != null) {
-            selectedSectionLevelOneBased = cachedSectionLevelOneBased;
-            selectedSection = resolved;
-        }
-    }
-
-    private static MapSection findSectionById(ParkourMap map, int levelOneBased, String sectionId) {
-        if (map == null) return null;
-        if (levelOneBased < 1 || levelOneBased > 4) return null;
-        if (sectionId == null) return null;
-
-        ArrayList<MapSection> list = map.getSectionsForLevel(levelOneBased);
-        if (list == null || list.isEmpty()) return null;
-
-        for (int i = 0; i < list.size(); i++) {
-            MapSection s = list.get(i);
-            if (s == null) continue;
-            String id = s.getId();
-            if (id != null && id.equals(sectionId)) {
-                return s;
-            }
-        }
-
-        return null;
-    }
-
-    private static void setStickySectionCache(ServerProfile server, ParkourMap map, int levelOneBased, MapSection section) {
-        String sid = (server != null) ? safeId(server.getId()) : "";
-        String mid = (map != null) ? safeId(map.getId()) : "";
-
-        if (sid.isEmpty() || mid.isEmpty()) {
-            clearStickySectionCache();
-            return;
-        }
-
-        cachedServerId = sid;
-        cachedMapId = mid;
-
-        if (section == null || levelOneBased < 1 || levelOneBased > 4) {
-            cachedSectionLevelOneBased = 0;
-            cachedSectionId = null;
-            return;
-        }
-
-        cachedSectionLevelOneBased = levelOneBased;
-        cachedSectionId = section.getId();
-    }
-
-    private static void clearStickySectionCache() {
-        cachedServerId = null;
-        cachedMapId = null;
-        cachedSectionLevelOneBased = 0;
-        cachedSectionId = null;
     }
 
     private int getBaseY() {
@@ -197,10 +131,10 @@ public class GuiCreateJumpContext extends GuiScreen {
 
         int yBase = getBaseY();
 
-        backButton = new GuiButton(20, 8, 8, 60, 20, "Back");
+        backButton = new GuiButton(BTN_BACK, 8, 8, 60, 20, "Back");
         this.buttonList.add(backButton);
 
-        nextButton = new GuiButton(5, 0, 0, "Next");
+        nextButton = new GuiButton(BTN_NEXT, 0, 0, "Next");
         nextButton.xPosition = (this.width - nextButton.width) / 2;
         nextButton.yPosition = this.height - 28;
         this.buttonList.add(nextButton);
@@ -219,40 +153,40 @@ public class GuiCreateJumpContext extends GuiScreen {
         tryAutofillJumpName();
 
         // Row 2: Server/Map buttons
-        pickServerButton = new GuiButton(6, 0, 0, "Select server");
+        pickServerButton = new GuiButton(BTN_PICK_SERVER, 0, 0, "Select server");
         pickServerButton.width = 110;
         pickServerButton.xPosition = (this.width - FIELD_WIDTH) / 2;
         pickServerButton.yPosition = yBase + 26;
         this.buttonList.add(pickServerButton);
 
-        pickMapButton = new GuiButton(7, 0, 0, "Select map");
+        pickMapButton = new GuiButton(BTN_PICK_MAP, 0, 0, "Select map");
         pickMapButton.width = 110;
         pickMapButton.xPosition = (this.width - FIELD_WIDTH) / 2 + 110;
         pickMapButton.yPosition = yBase + 26;
         this.buttonList.add(pickMapButton);
 
         // Row 3: Section button (optional)
-        pickSectionButton = new GuiButton(12, 0, 0, "Select section (optional)");
+        pickSectionButton = new GuiButton(BTN_PICK_SECTION, 0, 0, "Select section (optional)");
         pickSectionButton.width = FIELD_WIDTH;
         pickSectionButton.xPosition = (this.width - FIELD_WIDTH) / 2;
         pickSectionButton.yPosition = yBase + 50;
         this.buttonList.add(pickSectionButton);
 
         // Placeholder buttons (below the info rows)
-        createPlaceholderButton = new GuiButton(8, 0, 0, "Create placeholder");
+        createPlaceholderButton = new GuiButton(BTN_CREATE_PLACEHOLDER, 0, 0, "Create placeholder");
         createPlaceholderButton.width = 160;
         createPlaceholderButton.xPosition = (this.width - createPlaceholderButton.width) / 2;
         createPlaceholderButton.yPosition = yBase + 156;
         this.buttonList.add(createPlaceholderButton);
 
-        configurePlaceholderButton = new GuiButton(9, 0, 0, "Configure placeholder");
+        configurePlaceholderButton = new GuiButton(BTN_CONFIGURE_PLACEHOLDER, 0, 0, "Configure placeholder");
         configurePlaceholderButton.width = 160;
         configurePlaceholderButton.xPosition = (this.width - configurePlaceholderButton.width) / 2;
         configurePlaceholderButton.yPosition = yBase + 180;
         this.buttonList.add(configurePlaceholderButton);
 
         // Navigation buttons for placeholder SECTION paging (Level 1)
-        prevSectionButton = new GuiButton(13, 0, 0, "<");
+        prevSectionButton = new GuiButton(BTN_PREV_SECTION, 0, 0, "<");
         prevSectionButton.width = 20;
         prevSectionButton.height = 20;
         prevSectionButton.xPosition = getFieldX();
@@ -260,7 +194,7 @@ public class GuiCreateJumpContext extends GuiScreen {
         prevSectionButton.visible = false;
         this.buttonList.add(prevSectionButton);
 
-        nextSectionButton = new GuiButton(14, 0, 0, ">");
+        nextSectionButton = new GuiButton(BTN_NEXT_SECTION, 0, 0, ">");
         nextSectionButton.width = 20;
         nextSectionButton.height = 20;
         nextSectionButton.xPosition = getFieldX() + FIELD_WIDTH - 20;
@@ -269,7 +203,7 @@ public class GuiCreateJumpContext extends GuiScreen {
         this.buttonList.add(nextSectionButton);
 
         // Navigation buttons for placeholder mode (shown only when enabled)
-        prevJumpButton = new GuiButton(10, 0, 0, "<");
+        prevJumpButton = new GuiButton(BTN_PREV_JUMP, 0, 0, "<");
         prevJumpButton.width = 20;
         prevJumpButton.height = 20;
         prevJumpButton.xPosition = getFieldX();
@@ -277,7 +211,7 @@ public class GuiCreateJumpContext extends GuiScreen {
         prevJumpButton.visible = false;
         this.buttonList.add(prevJumpButton);
 
-        nextJumpButton = new GuiButton(11, 0, 0, ">");
+        nextJumpButton = new GuiButton(BTN_NEXT_JUMP, 0, 0, ">");
         nextJumpButton.width = 20;
         nextJumpButton.height = 20;
         nextJumpButton.xPosition = getFieldX() + FIELD_WIDTH - 20;
@@ -295,8 +229,8 @@ public class GuiCreateJumpContext extends GuiScreen {
 
     private boolean isSectionPickAllowed() {
         if (selectedServer == null) return false;
-        if (ReminderManager.isGlobalServer(selectedServer)) return false;
-        if (ReminderManager.isRestoredServer(selectedServer)) return false;
+        if (BuiltinContainers.isGlobalServer(selectedServer)) return false;
+        if (BuiltinContainers.isRestoredServer(selectedServer)) return false;
         return selectedMap != null;
     }
 
@@ -313,8 +247,8 @@ public class GuiCreateJumpContext extends GuiScreen {
             return;
         }
 
-        if (ReminderManager.isPlaceholderSyncEnabledForSelectedMap()) {
-            String name = ReminderManager.getCurrentPlaceholderJumpName();
+        if (PlaceholderSyncService.isPlaceholderSyncEnabledForSelectedMap()) {
+            String name = PlaceholderSyncService.getCurrentPlaceholderJumpName();
             if (name != null && name.trim().length() > 0) {
                 jumpNameField.setText(name.trim());
                 cachedJumpNameText = name.trim();
@@ -333,16 +267,16 @@ public class GuiCreateJumpContext extends GuiScreen {
         int yBase = getBaseY();
 
         // Placeholder navigation UI (only when enabled)
-        boolean showNav = ReminderManager.isPlaceholderSyncEnabledForSelectedMap();
+        boolean showNav = PlaceholderSyncService.isPlaceholderSyncEnabledForSelectedMap();
         if (showNav) {
             // Section pager (Level 1) - sheet-driven
-            int secCount = ReminderManager.getPlaceholderSectionCount();
+            int secCount = PlaceholderSyncService.getPlaceholderSectionCount();
             if (secCount > 0) {
-                int secIdx = ReminderManager.getCurrentPlaceholderSectionIndex();
+                int secIdx = PlaceholderSyncService.getCurrentPlaceholderSectionIndex();
                 if (secIdx < 0) secIdx = 0;
                 if (secIdx >= secCount) secIdx = secCount - 1;
 
-                String nm = ReminderManager.getCurrentPlaceholderSectionName();
+                String nm = PlaceholderSyncService.getCurrentPlaceholderSectionName();
                 if (nm == null || nm.trim().isEmpty()) nm = "(unnamed)";
 
                 String secPage = (secIdx + 1) + "/" + secCount + "  " + nm;
@@ -352,8 +286,8 @@ public class GuiCreateJumpContext extends GuiScreen {
             }
 
             // Jump pager
-            int idx = ReminderManager.getPlaceholderJumpIndex() + 1;
-            int count = ReminderManager.getPlaceholderJumpCount();
+            int idx = PlaceholderSyncService.getPlaceholderJumpIndex() + 1;
+            int count = PlaceholderSyncService.getPlaceholderJumpCount();
             String page = idx + "/" + count;
             this.drawCenteredString(this.fontRendererObj, EnumChatFormatting.YELLOW + page, this.width / 2, yBase - 16, COLOR_TEXT);
         }
@@ -412,20 +346,9 @@ public class GuiCreateJumpContext extends GuiScreen {
     }
 
     private void drawValidationOverlays() {
-        if (!hasValidId(jumpNameField.getText())) {
-            drawFieldOverlay(jumpNameField);
+        if (!IdRules.isValidId(jumpNameField.getText())) {
+            FormFields.drawInvalidOverlay(jumpNameField);
         }
-    }
-
-    private void drawFieldOverlay(GuiTextField field) {
-        if (field == null) {
-            return;
-        }
-        int left = field.xPosition - 1;
-        int top = field.yPosition - 1;
-        int right = field.xPosition + field.width + 1;
-        int bottom = field.yPosition + field.height + 1;
-        drawRect(left, top, right, bottom, COLOR_INVALID_OVERLAY);
     }
 
     private int getFieldX() {
@@ -477,18 +400,6 @@ public class GuiCreateJumpContext extends GuiScreen {
         super.mouseClicked(mouseX, mouseY, mouseButton);
     }
 
-    private static int getPlayerBlockX(EntityPlayerSP p) {
-        return (int) Math.floor(p.posX);
-    }
-
-    private static int getPlayerBlockYPlusOne(EntityPlayerSP p) {
-        return (int) Math.floor(p.posY) + 2;
-    }
-
-    private static int getPlayerBlockZ(EntityPlayerSP p) {
-        return (int) Math.floor(p.posZ);
-    }
-
     @Override
     protected void actionPerformed(GuiButton button) throws IOException {
         if (button == null) {
@@ -500,262 +411,231 @@ public class GuiCreateJumpContext extends GuiScreen {
             cachedJumpNameText = jumpNameField.getText();
         }
 
-        if (button.id == 20) {
-            goBack();
-            return;
-        }
-
-        if (button.id == 9) {
-            Minecraft.getMinecraft().displayGuiScreen(new GuiConfigurePlaceholder(this));
-            return;
-        }
-
-        if (button.id == 13) { // prev section (sheet-driven)
-            int cur = ReminderManager.getCurrentPlaceholderSectionIndex();
-            ReminderManager.jumpToPlaceholderSection(cur - 1);
-
-            if (jumpNameField != null) {
-                jumpNameField.setText(ReminderManager.getCurrentPlaceholderJumpName());
-                cachedJumpNameText = jumpNameField.getText();
-            }
-            updateButtonStates();
-            return;
-        }
-
-        if (button.id == 14) { // next section (sheet-driven)
-            int cur = ReminderManager.getCurrentPlaceholderSectionIndex();
-            ReminderManager.jumpToPlaceholderSection(cur + 1);
-
-            if (jumpNameField != null) {
-                jumpNameField.setText(ReminderManager.getCurrentPlaceholderJumpName());
-                cachedJumpNameText = jumpNameField.getText();
-            }
-            updateButtonStates();
-            return;
-        }
-
-        if (button.id == 10) { // prev
-            ReminderManager.prevPlaceholderJump();
-            if (jumpNameField != null) {
-                jumpNameField.setText(ReminderManager.getCurrentPlaceholderJumpName());
-                cachedJumpNameText = jumpNameField.getText();
-            }
-            updateButtonStates();
-            return;
-        }
-
-        if (button.id == 11) { // next
-            ReminderManager.nextPlaceholderJump();
-            if (jumpNameField != null) {
-                jumpNameField.setText(ReminderManager.getCurrentPlaceholderJumpName());
-                cachedJumpNameText = jumpNameField.getText();
-            }
-            updateButtonStates();
-            return;
-        }
-
-        if (button.id == 8) {
-            createPlaceholderJump();
-            return;
-        }
-
-        if (button.id == 12) {
-            if (!isSectionPickAllowed()) {
-                errorText = "Select a non-global server + map first.";
+        switch (button.id) {
+            case BTN_BACK:
+                goBack();
                 return;
-            }
+            case BTN_CONFIGURE_PLACEHOLDER:
+                Minecraft.getMinecraft().displayGuiScreen(new GuiConfigurePlaceholder(this));
+                return;
+            case BTN_PREV_SECTION:
+                onPlaceholderSectionStep(-1);
+                return;
+            case BTN_NEXT_SECTION:
+                onPlaceholderSectionStep(1);
+                return;
+            case BTN_PREV_JUMP:
+                PlaceholderSyncService.prevPlaceholderJump();
+                showCurrentPlaceholderJumpName();
+                return;
+            case BTN_NEXT_JUMP:
+                PlaceholderSyncService.nextPlaceholderJump();
+                showCurrentPlaceholderJumpName();
+                return;
+            case BTN_CREATE_PLACEHOLDER:
+                createPlaceholderJump();
+                return;
+            case BTN_PICK_SECTION:
+                onPickSection();
+                return;
+            case BTN_PICK_SERVER:
+                onPickServer();
+                return;
+            case BTN_PICK_MAP:
+                onPickMap();
+                return;
+            case BTN_NEXT:
+                onNext();
+                return;
+            default:
+                super.actionPerformed(button);
+        }
+    }
 
-            Minecraft.getMinecraft().displayGuiScreen(new GuiPickSectionPreview(
-                    this,
-                    selectedMap,
-                    (levelOneBased, section) -> {
-                        // level 0 + null => unselect (optional)
-                        if (section == null || levelOneBased < 1 || levelOneBased > 4) {
-                            clearSectionSelection();
-                            setStickySectionCache(selectedServer, selectedMap, 0, null);
-                        } else {
-                            selectedSectionLevelOneBased = levelOneBased;
-                            selectedSection = section;
-                            setStickySectionCache(selectedServer, selectedMap, levelOneBased, section);
-                        }
+    /** Moves the sheet-driven placeholder pager by whole sections. */
+    private void onPlaceholderSectionStep(int delta) {
+        int cur = PlaceholderSyncService.getCurrentPlaceholderSectionIndex();
+        PlaceholderSyncService.jumpToPlaceholderSection(cur + delta);
 
-                        errorText = "";
-                        updateButtonStates();
+        showCurrentPlaceholderJumpName();
+    }
+
+    private void onPickSection() {
+        if (!isSectionPickAllowed()) {
+            errorText = "Select a non-global server + map first.";
+            return;
+        }
+
+        Minecraft.getMinecraft().displayGuiScreen(new GuiPickSectionPreview(
+                this,
+                selectedMap,
+                (levelOneBased, section) -> {
+                    // level 0 + null => unselect (optional)
+                    if (section == null || levelOneBased < 1 || levelOneBased > 4) {
+                        clearSectionSelection();
+                        StickySectionCache.remember(selectedServer, selectedMap, 0, null);
+                    } else {
+                        selectedSectionLevelOneBased = levelOneBased;
+                        selectedSection = section;
+                        StickySectionCache.remember(selectedServer, selectedMap, levelOneBased, section);
                     }
-            ));
-            return;
-        }
 
-        if (button.id == 6) {
-            Minecraft.getMinecraft().displayGuiScreen(
-                    new GuiServerList(this, server -> {
-                        if (server != null && ReminderManager.isRestoredServer(server)) {
-                            selectedServer = null;
-                            selectedMap = null;
-                            clearSectionSelection();
-                            clearStickySectionCache();
+                    errorText = "";
+                    updateButtonStates();
+                }
+        ));
+    }
 
-                            ReminderManager.setSelectedServer(null);
-                            ReminderManager.setSelectedMap(null);
-                            ReminderManager.setSelectedJump(null);
-
-                            errorText = "RestoredStrats cannot be used for creating new jumps.";
-                            updateButtonStates();
-                            return;
-                        }
-
-                        selectedServer = server;
+    private void onPickServer() {
+        Minecraft.getMinecraft().displayGuiScreen(
+                new GuiServerList(this, server -> {
+                    if (server != null && BuiltinContainers.isRestoredServer(server)) {
+                        selectedServer = null;
+                        selectedMap = null;
                         clearSectionSelection();
-                        clearStickySectionCache();
+                        StickySectionCache.clear();
 
-                        if (selectedServer != null && ReminderManager.isGlobalServer(selectedServer)) {
-                            selectedMap = ReminderManager.getGlobalMap();
-                        } else {
-                            selectedMap = null;
-                        }
+                        SelectionState.setSelectedServer(null);
+                        SelectionState.setSelectedMap(null);
+                        SelectionState.setSelectedJump(null);
 
-                        ReminderManager.setSelectedServer(server);
-                        ReminderManager.setSelectedMap(selectedMap);
-                        ReminderManager.setSelectedJump(null);
-
-                        errorText = "";
+                        errorText = "RestoredStrats cannot be used for creating new jumps.";
                         updateButtonStates();
-                    }, false)
-            );
+                        return;
+                    }
+
+                    selectedServer = server;
+                    clearSectionSelection();
+                    StickySectionCache.clear();
+
+                    if (selectedServer != null && BuiltinContainers.isGlobalServer(selectedServer)) {
+                        selectedMap = BuiltinContainers.getGlobalMap();
+                    } else {
+                        selectedMap = null;
+                    }
+
+                    SelectionState.setSelectedServer(server);
+                    SelectionState.setSelectedMap(selectedMap);
+                    SelectionState.setSelectedJump(null);
+
+                    errorText = "";
+                    updateButtonStates();
+                }, false)
+        );
+    }
+
+    private void onPickMap() {
+        if (selectedServer == null) {
+            errorText = "Select a server first.";
             return;
         }
 
-        if (button.id == 7) {
-            if (selectedServer == null) {
-                errorText = "Select a server first.";
-                return;
-            }
-
-            if (ReminderManager.isGlobalServer(selectedServer)) {
-                selectedMap = ReminderManager.getGlobalMap();
-                ReminderManager.setSelectedMap(selectedMap);
-                clearSectionSelection();
-                clearStickySectionCache();
-                errorText = "";
-                updateButtonStates();
-                return;
-            }
-
-            Minecraft.getMinecraft().displayGuiScreen(
-                    new GuiMapList(this, selectedServer, map -> {
-                        selectedMap = map;
-                        clearSectionSelection();
-                        clearStickySectionCache();
-
-                        ReminderManager.setSelectedServer(selectedServer);
-                        ReminderManager.setSelectedMap(map);
-                        ReminderManager.setSelectedJump(null);
-
-                        errorText = "";
-                        updateButtonStates();
-                    })
-            );
+        if (BuiltinContainers.isGlobalServer(selectedServer)) {
+            selectedMap = BuiltinContainers.getGlobalMap();
+            SelectionState.setSelectedMap(selectedMap);
+            clearSectionSelection();
+            StickySectionCache.clear();
+            errorText = "";
+            updateButtonStates();
             return;
         }
 
-        if (button.id == 5) {
-            if (!nextButton.enabled) {
-                return;
-            }
+        Minecraft.getMinecraft().displayGuiScreen(
+                new GuiMapList(this, selectedServer, map -> {
+                    selectedMap = map;
+                    clearSectionSelection();
+                    StickySectionCache.clear();
 
-            String jumpId = safeId(jumpNameField.getText());
-            if (!hasValidId(jumpId)) {
-                errorText = "Jump Name is required.";
-                updateButtonStates();
-                return;
-            }
+                    SelectionState.setSelectedServer(selectedServer);
+                    SelectionState.setSelectedMap(map);
+                    SelectionState.setSelectedJump(null);
 
-            if (selectedServer == null) {
-                errorText = "Server is required.";
-                updateButtonStates();
-                return;
-            }
+                    errorText = "";
+                    updateButtonStates();
+                })
+        );
+    }
 
-            if (ReminderManager.isRestoredServer(selectedServer)) {
-                errorText = "RestoredStrats cannot be used for creating new jumps.";
-                selectedServer = null;
-                selectedMap = null;
-                clearSectionSelection();
-                clearStickySectionCache();
-                updateButtonStates();
-                return;
-            }
-
-            if (ReminderManager.isGlobalServer(selectedServer)) {
-                selectedMap = ReminderManager.getGlobalMap();
-                clearSectionSelection();
-                clearStickySectionCache();
-            }
-
-            if (selectedMap == null) {
-                errorText = "Map is required.";
-                updateButtonStates();
-                return;
-            }
-
-            ReminderManager.setSelectedServer(selectedServer);
-            ReminderManager.setSelectedMap(selectedMap);
-
-            EntityPlayerSP p = Minecraft.getMinecraft().thePlayer;
-
-            int x = 0;
-            int y = 0;
-            int z = 0;
-
-            if (p != null) {
-                x = getPlayerBlockX(p);
-                y = getPlayerBlockYPlusOne(p);
-                z = getPlayerBlockZ(p);
-            }
-
-            Jump j = ReminderManager.getOrCreateJumpByNameAndCoords(selectedMap, jumpId, x, y, z);
-
-            if (j == null) {
-                errorText = "Failed to resolve jump.";
-                updateButtonStates();
-                return;
-            }
-
-            // If a section is selected, insert/move jump into it.
-            if (selectedSection != null && selectedSectionLevelOneBased >= 1 && selectedSectionLevelOneBased <= 4 && isSectionPickAllowed()) {
-                ReminderManager.insertJumpAtEndOfSection(selectedMap, selectedSectionLevelOneBased, selectedSection, j);
-
-                // Keep section sticky for repeated jump creation
-                setStickySectionCache(selectedServer, selectedMap, selectedSectionLevelOneBased, selectedSection);
-            }
-
-            ReminderManager.setSelectedJump(j);
-            Minecraft.getMinecraft().displayGuiScreen(new GuiCreateReminder(this));
+    /** "Next": validates the form, creates / reuses the jump and opens the strategy editor. */
+    private void onNext() {
+        if (!nextButton.enabled) {
             return;
         }
 
-        super.actionPerformed(button);
+        String jumpId = safeId(jumpNameField.getText());
+        if (!IdRules.isValidId(jumpId)) {
+            errorText = "Jump Name is required.";
+            updateButtonStates();
+            return;
+        }
+
+        if (selectedServer == null) {
+            errorText = "Server is required.";
+            updateButtonStates();
+            return;
+        }
+
+        if (BuiltinContainers.isRestoredServer(selectedServer)) {
+            errorText = "RestoredStrats cannot be used for creating new jumps.";
+            selectedServer = null;
+            selectedMap = null;
+            clearSectionSelection();
+            StickySectionCache.clear();
+            updateButtonStates();
+            return;
+        }
+
+        if (BuiltinContainers.isGlobalServer(selectedServer)) {
+            selectedMap = BuiltinContainers.getGlobalMap();
+            clearSectionSelection();
+            StickySectionCache.clear();
+        }
+
+        if (selectedMap == null) {
+            errorText = "Map is required.";
+            updateButtonStates();
+            return;
+        }
+
+        SelectionState.setSelectedServer(selectedServer);
+        SelectionState.setSelectedMap(selectedMap);
+
+        Jump j = JumpService.getOrCreateJumpAtPlayer(selectedMap, jumpId);
+
+        if (j == null) {
+            errorText = "Failed to resolve jump.";
+            updateButtonStates();
+            return;
+        }
+
+        // If a section is selected, insert/move jump into it.
+        if (selectedSection != null && selectedSectionLevelOneBased >= 1 && selectedSectionLevelOneBased <= 4 && isSectionPickAllowed()) {
+            SectionLayoutService.insertJumpAtEndOfSection(selectedMap, selectedSectionLevelOneBased, selectedSection, j);
+
+            // Keep section sticky for repeated jump creation
+            StickySectionCache.remember(selectedServer, selectedMap, selectedSectionLevelOneBased, selectedSection);
+        }
+
+        SelectionState.setSelectedJump(j);
+        Minecraft.getMinecraft().displayGuiScreen(new GuiCreateReminder(this));
+    }
+
+    /** Puts the placeholder pager's current jump name into the name field. */
+    private void showCurrentPlaceholderJumpName() {
+        if (jumpNameField != null) {
+            jumpNameField.setText(PlaceholderSyncService.getCurrentPlaceholderJumpName());
+            cachedJumpNameText = jumpNameField.getText();
+        }
+        updateButtonStates();
     }
 
     private void createPlaceholderJump() {
         String jumpId = safeId(jumpNameField.getText());
-        if (!hasValidId(jumpId) || selectedServer == null || selectedMap == null) {
+        if (!IdRules.isValidId(jumpId) || selectedServer == null || selectedMap == null) {
             return;
         }
 
-        EntityPlayerSP p = Minecraft.getMinecraft().thePlayer;
-
-        int x = 0;
-        int y = 0;
-        int z = 0;
-
-        if (p != null) {
-            x = getPlayerBlockX(p);
-            y = getPlayerBlockYPlusOne(p);
-            z = getPlayerBlockZ(p);
-        }
-
-        Jump j = ReminderManager.getOrCreateJumpByNameAndCoords(selectedMap, jumpId, x, y, z);
+        Jump j = JumpService.getOrCreateJumpAtPlayer(selectedMap, jumpId);
         if (j == null) {
             errorText = "Failed to create placeholder jump.";
             return;
@@ -767,10 +647,10 @@ public class GuiCreateJumpContext extends GuiScreen {
                 && selectedSectionLevelOneBased <= 4
                 && isSectionPickAllowed()) {
 
-            ReminderManager.moveExistingJumpToEndOfSection(selectedMap, selectedSectionLevelOneBased, selectedSection, j);
+            SectionLayoutService.moveExistingJumpToEndOfSection(selectedMap, selectedSectionLevelOneBased, selectedSection, j);
 
             // Keep section sticky for repeated placeholder creation too
-            setStickySectionCache(selectedServer, selectedMap, selectedSectionLevelOneBased, selectedSection);
+            StickySectionCache.remember(selectedServer, selectedMap, selectedSectionLevelOneBased, selectedSection);
         }
 
         ArrayList<String> lines = new ArrayList<String>(8);
@@ -783,8 +663,8 @@ public class GuiCreateJumpContext extends GuiScreen {
         Reminder r = new Reminder(lines);
         j.getReminders().add(r);
 
-        ReminderManager.saveToFile();
-        ReminderManager.advancePlaceholderAfterCreate();
+        DataStoreRepository.save();
+        PlaceholderSyncService.advancePlaceholderAfterCreate();
 
         goBack();
     }
@@ -799,7 +679,7 @@ public class GuiCreateJumpContext extends GuiScreen {
 
     private void updateButtonStates() {
         boolean serverSelected = (selectedServer != null);
-        boolean isGlobal = (selectedServer != null && ReminderManager.isGlobalServer(selectedServer));
+        boolean isGlobal = (selectedServer != null && BuiltinContainers.isGlobalServer(selectedServer));
 
         if (pickMapButton != null) {
             pickMapButton.enabled = serverSelected && !isGlobal;
@@ -809,7 +689,7 @@ public class GuiCreateJumpContext extends GuiScreen {
             pickSectionButton.enabled = isSectionPickAllowed();
         }
 
-        boolean okName = hasValidId(safeId(jumpNameField != null ? jumpNameField.getText() : ""));
+        boolean okName = IdRules.isValidId(safeId(jumpNameField != null ? jumpNameField.getText() : ""));
 
         boolean ok;
         if (isGlobal) {
@@ -831,9 +711,9 @@ public class GuiCreateJumpContext extends GuiScreen {
             configurePlaceholderButton.enabled = canConfig;
         }
 
-        boolean showNav = ReminderManager.isPlaceholderSyncEnabledForSelectedMap();
+        boolean showNav = PlaceholderSyncService.isPlaceholderSyncEnabledForSelectedMap();
 
-        boolean hasSectionsL1 = showNav && (ReminderManager.getPlaceholderSectionCount() > 0);
+        boolean hasSectionsL1 = showNav && (PlaceholderSyncService.getPlaceholderSectionCount() > 0);
 
         if (prevSectionButton != null) {
             prevSectionButton.visible = showNav && hasSectionsL1;
@@ -852,13 +732,6 @@ public class GuiCreateJumpContext extends GuiScreen {
             nextJumpButton.visible = showNav;
             nextJumpButton.enabled = showNav;
         }
-    }
-
-    private static boolean hasValidId(String id) {
-        if (id == null) return false;
-        String trimmed = id.trim();
-        if (trimmed.isEmpty()) return false;
-        return trimmed.length() <= 48;
     }
 
     private static String safeId(String s) {

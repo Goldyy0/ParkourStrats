@@ -1,25 +1,27 @@
 package me.texyle.startreminders.gui.hierarchy;
 
-import java.util.ArrayList;
-import java.util.IdentityHashMap;
 import java.util.List;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.FontRenderer;
+import net.minecraft.client.gui.GuiSlot;
+import net.minecraft.client.renderer.GlStateManager;
+import net.minecraft.client.renderer.Tessellator;
+import org.lwjgl.input.Keyboard;
+import org.lwjgl.input.Mouse;
 
 import me.texyle.startreminders.data.Jump;
 import me.texyle.startreminders.data.MapSection;
 import me.texyle.startreminders.data.ParkourMap;
+import me.texyle.startreminders.gui.GuiDraw;
+import me.texyle.startreminders.gui.GuiScissor;
 import me.texyle.startreminders.reminders.Reminder;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.FontRenderer;
-import net.minecraft.client.gui.GuiSlot;
-import net.minecraft.client.gui.ScaledResolution;
-import net.minecraft.client.renderer.GlStateManager;
-import net.minecraft.client.renderer.Tessellator;
-import net.minecraft.client.renderer.WorldRenderer;
-import net.minecraft.client.renderer.vertex.DefaultVertexFormats;
-import org.lwjgl.input.Keyboard;
-import org.lwjgl.input.Mouse;
-import org.lwjgl.opengl.GL11;
 
+/**
+ * Scrollable table of jumps with one row per strategy. Row model, section lookups and scrollbars live in
+ * {@link JumpTableRows}, {@link SectionColumns}, {@link HorizontalScroller} and {@link VerticalScrollbar};
+ * this class draws the cells and turns mouse input into selection callbacks.
+ */
 public class GuiJumpTableSlot extends GuiSlot {
 
     public interface ISelectionHandler {
@@ -32,6 +34,10 @@ public class GuiJumpTableSlot extends GuiSlot {
     private final FontRenderer font;
     private final List<Jump> items;
     private final ISelectionHandler handler;
+
+    private final JumpTableRows rows;
+    private final HorizontalScroller horizontalScroller = new HorizontalScroller();
+    private final VerticalScrollbar verticalScrollbar = new VerticalScrollbar();
 
     // Optional: needed for section rendering (colors + names)
     private ParkourMap map = null;
@@ -48,8 +54,8 @@ public class GuiJumpTableSlot extends GuiSlot {
     private static final int PAD_X = 6;
 
     // Cell padding
-    private static final int CELL_PAD_X = 5;
-    private static final int CELL_PAD_Y = 4;
+    static final int CELL_PAD_X = 5;
+    static final int CELL_PAD_Y = 4;
 
     // Grid color (ARGB)
     private static final int COLOR_GRID = 0x442A2A2A;
@@ -69,6 +75,8 @@ public class GuiJumpTableSlot extends GuiSlot {
     public static final int COL_AUTHOR_W = 90;
     public static final int COL_TIPS_W = 90;
 
+    public static final int COL_SECTION_W = 80; // width per section column
+
     private static final long DOUBLE_CLICK_WINDOW_MS = 320L;
     private static final long DUPLICATE_CLICK_GUARD_MS = 80L;
 
@@ -78,65 +86,32 @@ public class GuiJumpTableSlot extends GuiSlot {
     // Optional: subtle fill for Jump column
     private static final int COLOR_JUMP_COL_FILL = 0x22111111;
 
-    // Custom vertical scrollbar skin colors (match horizontal)
-    private static final int COLOR_SCROLLBAR_BG = 0x44000000;
-    private static final int COLOR_SCROLLBAR_THUMB = 0xAA6666FF;
-
     // Section cell visuals
     private static final float SECTION_TINT_STRENGTH = 0.72f;
     private static final int SECTION_TINT_BASE_RGB = 0x101010;
 
-    // Horizontal scroll
-    private double xScrollD = 0.0;
-
-    // Horizontal scrollbar drag state
-    private boolean isDraggingScrollbar = false;
-    private int dragGrabOffsetX = 0;
-
-    // Cached horizontal scrollbar geometry
-    private int sbBarLeft = 0;
-    private int sbBarRight = 0;
-    private int sbYTop = 0;
-    private int sbYBottom = 0;
-    private int sbThumbX = 0;
-    private int sbThumbW = 0;
-    private int sbMaxScroll = 0;
-
-    // Cached vertical scrollbar geometry
-    private int vsbBarLeft = 0;
-    private int vsbBarRight = 0;
-    private int vsbBarTop = 0;
-    private int vsbBarBottom = 0;
-    private int vsbThumbY = 0;
-    private int vsbThumbH = 0;
-    private int vsbMaxScroll = 0;
-
-    // Vertical scrollbar drag state
-    private boolean isDraggingVScrollbar = false;
-    private int vDragGrabOffsetY = 0;
-
-    // Flattened rows: one row per strategy (Reminder) with Jump grouping
-    private final ArrayList<RowRef> rows = new ArrayList<RowRef>();
-
-    // Variable row heights cache (content-space)
-    private final ArrayList<Integer> rowHeights = new ArrayList<Integer>();
-    private final ArrayList<Integer> rowTops = new ArrayList<Integer>();
-    private int contentHeightPx = 0;
-
-    // Reminder formats:
-    // New (8): [Position, Facing, Setup, Strategy, Strafe, Turn, Author, Tips]
-    private static final int REM_NEW_MIN_SIZE = 8;
-    private static final int REM_NEW_SETUP_OFFSET = 2;
-
-    // Previous (6): [Setup, Strategy, Strafe, Turn, Author, Tips]
-    private static final int REM_PREV_MIN_SIZE = 6;
-
-    public static final int COL_SECTION_W = 80; // width per section column
+    private static final int WHEEL_STEP = 18;
 
     private int sectionColumns = 0;
 
-    // Cache: Jump -> index in items list (for quick jumpIndex lookup)
-    private final IdentityHashMap<Jump, Integer> jumpIndexCache = new IdentityHashMap<Jump, Integer>();
+    public GuiJumpTableSlot(Minecraft mc, int width, int height, int top, int bottom, int slotHeight,
+                            List<Jump> items, ISelectionHandler handler) {
+        super(mc, width, height, top, bottom, slotHeight);
+        this.mc = mc;
+        this.font = mc.fontRendererObj;
+        this.items = items;
+        this.handler = handler;
+        this.rows = new JumpTableRows(items, font);
+
+        // Disable vanilla selection highlight box.
+        this.showSelectionBox = false;
+
+        rebuildRows();
+    }
+
+    // -------------------------
+    // Configuration / state
+    // -------------------------
 
     public void setMap(ParkourMap map) {
         this.map = map;
@@ -147,577 +122,43 @@ public class GuiJumpTableSlot extends GuiSlot {
         if (count > 4) count = 4;
         this.sectionColumns = count;
 
-        rebuildRowLayout();
+        rows.relayout();
         clampVerticalScroll();
     }
 
-    private static class RowRef {
-        final Jump jump;
-        final Reminder reminder;      // may be null if jump has no strategies
-        final int groupRowIndex;      // 0..groupSize-1
-        final int groupSize;
+    public void setPanelBounds(int left, int right) {
+        this.left = left;
+        this.right = right;
 
-        RowRef(Jump jump, Reminder reminder, int groupRowIndex, int groupSize) {
-            this.jump = jump;
-            this.reminder = reminder;
-            this.groupRowIndex = groupRowIndex;
-            this.groupSize = groupSize;
-        }
-
-        int getOrdinalOneBased() {
-            return groupRowIndex + 1;
-        }
-    }
-
-    public GuiJumpTableSlot(Minecraft mc, int width, int height, int top, int bottom, int slotHeight,
-                            List<Jump> items, ISelectionHandler handler) {
-        super(mc, width, height, top, bottom, slotHeight);
-        this.mc = mc;
-        this.font = mc.fontRendererObj;
-        this.items = items;
-        this.handler = handler;
-
-        // Disable vanilla selection highlight box.
-        this.showSelectionBox = false;
-
-        rebuildRows();
-    }
-
-    @Override
-    public void drawScreen(int mouseX, int mouseY, float partialTicks) {
-        enableScissorForSlotViewport();
-        try {
-            drawVariableHeightList(mouseX, mouseY);
-        } finally {
-            disableScissor();
-        }
-
-        coverVanillaVerticalScrollbar();
-        drawVerticalScrollbarSkin();
-        updateVerticalScrollbarDrag(mouseX, mouseY);
-    }
-
-    private void drawVariableHeightList(int mouseX, int mouseY) {
+        rows.relayout();
         clampVerticalScroll();
-
-        int scroll = (int) this.amountScrolled;
-
-        int first = findFirstVisibleRow(scroll);
-        if (first < 0) {
-            return;
-        }
-
-        int y = this.top - scroll + rowTops.get(first);
-
-        for (int i = first; i < rows.size(); i++) {
-            int h = rowHeights.get(i);
-            int rowTop = y;
-            int rowBottom = y + h;
-
-            if (rowTop > this.bottom) {
-                break;
-            }
-
-            if (rowBottom >= this.top) {
-                drawRow(i, rowTop, rowBottom);
-            }
-
-            y += h;
-        }
-    }
-
-    private void drawRow(int entryID, int rowTop, int rowBottom) {
-        // Zebra background first (row background only)
-        int zebra = (entryID % 2 == 0) ? COLOR_ROW_DARK : COLOR_ROW_LIGHT;
-        drawRectLocal(this.left, rowTop, this.right, rowBottom, zebra);
-
-        // Selection overlay (row background only)
-        if (entryID == selectedIndex) {
-            drawRectLocal(this.left, rowTop, this.right, rowBottom, COLOR_ROW_SELECTED);
-        }
-
-        if (rows == null || entryID < 0 || entryID >= rows.size()) {
-            return;
-        }
-
-        RowRef row = rows.get(entryID);
-        if (row == null || row.jump == null) {
-            return;
-        }
-
-        Reminder r = row.reminder;
-
-        int x = getHeaderStartX();
-
-        // Row number
-        drawCellWithGrid(String.valueOf(entryID + 1), x, rowTop, COL_ROW_W, rowBottom, true);
-        x += COL_ROW_W;
-
-        // Section columns: color ONLY these cells, not full rows.
-        boolean isFirstRowOfJump = (row.groupRowIndex == 0);
-        for (int col = 0; col < sectionColumns; col++) {
-            drawSectionCell(col, row, isFirstRowOfJump, x, rowTop, COL_SECTION_W, rowBottom, false);
-            x += COL_SECTION_W;
-        }
-
-        // Jump column
-        drawJumpOrdinalCellWithGrid(row, x, rowTop, COL_JUMP_W, rowBottom, false);
-        x += COL_JUMP_W;
-
-        // Position
-        drawCellWithGrid(getPositionFromReminder(r), x, rowTop, COL_POS_W, rowBottom, false);
-        x += COL_POS_W;
-
-        // Facing
-        drawCellWithGrid(getFacingFromReminder(r), x, rowTop, COL_FACING_W, rowBottom, false);
-        x += COL_FACING_W;
-
-        // Setup
-        drawCellWithGrid(getReminderField(r, 0), x, rowTop, COL_SETUP_W, rowBottom, false);
-        x += COL_SETUP_W;
-
-        // Strategy
-        drawCellWithGrid(getReminderField(r, 1), x, rowTop, COL_STRAT_W, rowBottom, false);
-        x += COL_STRAT_W;
-
-        // Strafe
-        drawCellWithGrid(getReminderField(r, 2), x, rowTop, COL_STRAFE_W, rowBottom, false);
-        x += COL_STRAFE_W;
-
-        // Turn
-        drawCellWithGrid(getReminderField(r, 3), x, rowTop, COL_TURN_W, rowBottom, false);
-        x += COL_TURN_W;
-
-        // Author
-        drawCellWithGrid(getReminderField(r, 4), x, rowTop, COL_AUTHOR_W, rowBottom, false);
-        x += COL_AUTHOR_W;
-
-        // Tips
-        drawCellWithGrid(getReminderField(r, 5), x, rowTop, COL_TIPS_W, rowBottom, false);
-    }
-
-    /**
-     * Section cell behavior:
-     * - Only the SECTION cell is colored (not the entire row).
-     * - The cell color is the section color if a section exists for (col, jumpIndex).
-     * - If missing for this column, it inherits the color from the nearest LEFT column that has a section at the same jumpIndex.
-     *   (III <- II <- I)
-     * - Section name (bold) is drawn only on the FIRST row of the jump group (first strategy row),
-     *   and only if this column has a real section that starts at this jumpIndex.
-     * - No end-of-section markers are drawn.
-     */
-    private void drawSectionCell(int col, RowRef row, boolean isFirstRowOfJump,
-                                 int x, int yTop, int w, int yBottom, boolean isFirstCol) {
-        int jumpIndex = getJumpIndex(row.jump);
-
-        // "Direct" section for this column at this jumpIndex (may end as null)
-        MapSection direct = getSectionAt(col, jumpIndex);
-
-        // Color source:
-        MapSection colorSource = direct;
-        if (colorSource == null) {
-            // inherit from nearest left column
-            for (int c = col - 1; c >= 0; c--) {
-                MapSection sLeft = getSectionAt(c, jumpIndex);
-                if (sLeft != null) {
-                    colorSource = sLeft;
-                    break;
-                }
-            }
-        }
-
-        if (colorSource != null) {
-            int fill = tintOpaque(colorSource.getColorArgb(), SECTION_TINT_BASE_RGB, SECTION_TINT_STRENGTH);
-            drawRectLocal(x, yTop, x + w, yBottom, fill);
-        }
-
-        // Draw start label only if THIS column has a real section, and it's the start row,
-        // and ONLY on the first row of the jump group (first strategy row).
-        if (isFirstRowOfJump && direct != null && jumpIndex == direct.getStartJumpIndex()) {
-            String name = direct.getName() != null ? direct.getName() : "";
-            if (!name.trim().isEmpty()) {
-                // Use per-section text color (ARGB -> RGB)
-                int rgb = direct.getTextColorArgb() & 0xFFFFFF;
-                drawCellWrappedWithColor("\u00A7l" + name + "\u00A7r", x, yTop, w, yBottom, rgb);
-            }
-        }
-
-        // Grid border (keep consistent)
-        drawCellBorderThin(x, yTop, x + w, yBottom, isFirstCol, false);
-    }
-
-    private void drawCellWrappedWithColor(String text, int x, int yTop, int w, int yBottom, int rgb) {
-        String safe = text != null ? text : "";
-        int innerW = Math.max(0, w - (CELL_PAD_X * 2));
-        int innerH = Math.max(0, (yBottom - yTop) - (CELL_PAD_Y * 2));
-
-        if (innerW <= 0 || innerH <= 0) {
-            return;
-        }
-
-        int lineH = font.FONT_HEIGHT;
-        int maxLines = Math.max(1, innerH / lineH);
-
-        List<String> lines = font.listFormattedStringToWidth(safe, innerW);
-        if (lines == null || lines.isEmpty()) {
-            return;
-        }
-
-        int drawLines = Math.min(maxLines, lines.size());
-        int startX = x + CELL_PAD_X;
-        int startY = yTop + CELL_PAD_Y;
-
-        for (int i = 0; i < drawLines; i++) {
-            String ln = lines.get(i);
-            if (ln == null) ln = "";
-            font.drawString(ln, startX, startY + (i * lineH), rgb, true);
-        }
-    }
-
-    private int getJumpIndex(Jump j) {
-        if (j == null) return -1;
-
-        Integer cached = jumpIndexCache.get(j);
-        if (cached != null) return cached.intValue();
-
-        if (items == null) return -1;
-
-        // IMPORTANT: do NOT use items.indexOf(j) (equals() may match wrong jump).
-        int idx = -1;
-        for (int i = 0; i < items.size(); i++) {
-            if (items.get(i) == j) {
-                idx = i;
-                break;
-            }
-        }
-
-        if (idx < 0) {
-            // fallback: keep it stable-ish, no caching
-            return -1;
-        }
-
-        jumpIndexCache.put(j, Integer.valueOf(idx));
-        return idx;
-    }
-
-    private MapSection getSectionAt(int columnIndex, int jumpIndex) {
-        if (map == null) return null;
-        if (jumpIndex < 0) return null;
-
-        // columnIndex is 0-based (Section I...IV), map API is 1-based levels (1..4)
-        int levelOneBased = columnIndex + 1;
-
-        // Respect map configuration (e.g., if map has only 2 section levels)
-        if (levelOneBased < 1 || levelOneBased > map.getMaxSectionLevelsAllowed()) {
-            return null;
-        }
-
-        ArrayList<MapSection> list = map.getSectionsForLevel(levelOneBased);
-        if (list == null || list.isEmpty()) return null;
-
-        for (int i = 0; i < list.size(); i++) {
-            MapSection s = list.get(i);
-            if (s == null) continue;
-
-            int a = s.getStartJumpIndex();
-            int b = s.getEndJumpIndex();
-
-            // Ignore inactive sections ("Not set")
-            if (a < 0 || b < 0) {
-                continue;
-            }
-
-            if (a > b) {
-                int tmp = a;
-                a = b;
-                b = tmp;
-            }
-
-            // Ignore empty / invalid sections
-            if (a > b) {
-                continue;
-            }
-
-            if (jumpIndex >= a && jumpIndex <= b) {
-                return s;
-            }
-
-        }
-
-        return null;
-    }
-
-    private static int tintOpaque(int argb, int baseRgb, float strength) {
-        if (strength < 0f) strength = 0f;
-        if (strength > 1f) strength = 1f;
-
-        int r = (argb >> 16) & 0xFF;
-        int g = (argb >> 8) & 0xFF;
-        int b = (argb) & 0xFF;
-
-        int br = (baseRgb >> 16) & 0xFF;
-        int bg = (baseRgb >> 8) & 0xFF;
-        int bb = (baseRgb) & 0xFF;
-
-        int outR = (int) (br + (r - br) * strength);
-        int outG = (int) (bg + (g - bg) * strength);
-        int outB = (int) (bb + (b - bb) * strength);
-
-        // force opaque
-        return (0xFF << 24) | ((outR & 0xFF) << 16) | ((outG & 0xFF) << 8) | (outB & 0xFF);
-    }
-
-    private void clampVerticalScroll() {
-        int visibleH = (this.bottom - this.top);
-        int maxScroll = Math.max(0, getContentHeight() - visibleH);
-
-        if (this.amountScrolled < 0) {
-            this.amountScrolled = 0;
-        } else if (this.amountScrolled > maxScroll) {
-            this.amountScrolled = maxScroll;
-        }
-    }
-
-    private int findFirstVisibleRow(int scroll) {
-        if (rowTops == null || rowTops.isEmpty()) {
-            return -1;
-        }
-
-        for (int i = 0; i < rowTops.size(); i++) {
-            int top = rowTops.get(i);
-            int bottom = top + rowHeights.get(i);
-            if (bottom > scroll) {
-                return i;
-            }
-        }
-        return rowTops.size() - 1;
-    }
-
-    private int getRowIndexAt(int mouseX, int mouseY) {
-        if (mouseY < this.top || mouseY > this.bottom) {
-            return -1;
-        }
-
-        int yInContent = (int) this.amountScrolled + (mouseY - this.top);
-
-        for (int i = 0; i < rowTops.size(); i++) {
-            int t = rowTops.get(i);
-            int b = t + rowHeights.get(i);
-            if (yInContent >= t && yInContent < b) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    @Override
-    public void handleMouseInput() {
-        int dWheel = Mouse.getEventDWheel();
-        boolean shiftDown = Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) || Keyboard.isKeyDown(Keyboard.KEY_RSHIFT);
-
-        if (!shiftDown && dWheel != 0) {
-            int step = 18;
-            if (dWheel > 0) {
-                this.amountScrolled -= step;
-            } else {
-                this.amountScrolled += step;
-            }
-            clampVerticalScroll();
-        }
-
-        if (Mouse.getEventButton() == 0 && Mouse.getEventButtonState()) {
-            int mouseX = getMouseXScaled();
-            int mouseY = getMouseYScaled();
-
-            if (mouseY >= this.top && mouseY <= this.bottom) {
-                if (isMouseOverVerticalScrollbar(mouseX, mouseY)) {
-                    return;
-                }
-
-                int idx = getRowIndexAt(mouseX, mouseY);
-                if (idx >= 0 && idx < getSize()) {
-                    elementClicked(idx, false, mouseX, mouseY);
-                }
-            }
-        }
-    }
-
-    private int getMouseXScaled() {
-        return Mouse.getEventX() * this.width / this.mc.displayWidth;
-    }
-
-    private int getMouseYScaled() {
-        return this.height - (Mouse.getEventY() * this.height / this.mc.displayHeight) - 1;
-    }
-
-    private void enableScissorForSlotViewport() {
-        int x = this.left;
-        int y = this.top;
-        int w = Math.max(0, this.right - this.left);
-        int h = Math.max(0, this.bottom - this.top);
-
-        if (w <= 0 || h <= 0) {
-            return;
-        }
-
-        ScaledResolution sr = new ScaledResolution(this.mc);
-        int scale = sr.getScaleFactor();
-
-        int scX = x * scale;
-        int scY = (sr.getScaledHeight() - (y + h)) * scale;
-        int scW = w * scale;
-        int scH = h * scale;
-
-        GL11.glEnable(GL11.GL_SCISSOR_TEST);
-        GL11.glScissor(scX, scY, scW, scH);
-    }
-
-    private void disableScissor() {
-        GL11.glDisable(GL11.GL_SCISSOR_TEST);
-    }
-
-    @Override
-    protected int getScrollBarX() {
-        int barW = 6;
-        int barRight = this.right - 2;
-        return barRight - barW;
-    }
-
-    private void coverVanillaVerticalScrollbar() {
-        int visibleH = (this.bottom - this.top);
-        int totalH = getContentHeight();
-        int maxScroll = Math.max(0, totalH - visibleH);
-
-        if (maxScroll <= 0) {
-            return;
-        }
-
-        int barLeft = getScrollBarX();
-        int barRight = barLeft + 6;
-
-        GlStateManager.disableTexture2D();
-        GlStateManager.enableBlend();
-        drawRectLocal(barLeft, this.top, barRight, this.bottom, 0xFF101010);
-    }
-
-    @Override
-    public int getListWidth() {
-        int w = (this.right - this.left) - 10;
-        return Math.max(0, w);
-    }
-
-    private void drawVerticalScrollbarSkin() {
-        int visibleH = (this.bottom - this.top);
-        int totalH = getContentHeight();
-        int maxScroll = Math.max(0, totalH - visibleH);
-
-        if (maxScroll <= 0) {
-            vsbBarLeft = vsbBarRight = vsbBarTop = vsbBarBottom = vsbThumbY = vsbThumbH = 0;
-            vsbMaxScroll = 0;
-            isDraggingVScrollbar = false;
-            return;
-        }
-
-        int barW = 6;
-        int barRight = this.right - 2;
-        int barLeft = barRight - barW;
-
-        int barTop = this.top;
-        int barBottom = this.bottom;
-        int barH = barBottom - barTop;
-
-        int thumbH = Math.max(24, (int) ((barH * (double) visibleH) / (double) totalH));
-        int trackH = barH - thumbH;
-        if (trackH < 0) trackH = 0;
-
-        double t = (maxScroll == 0) ? 0.0 : (this.amountScrolled / (double) maxScroll);
-        if (t < 0.0) t = 0.0;
-        if (t > 1.0) t = 1.0;
-
-        int thumbY = barTop + (int) Math.round(t * trackH);
-
-        vsbBarLeft = barLeft;
-        vsbBarRight = barRight;
-        vsbBarTop = barTop;
-        vsbBarBottom = barBottom;
-        vsbThumbY = thumbY;
-        vsbThumbH = thumbH;
-        vsbMaxScroll = maxScroll;
-
-        drawRectLocal(barLeft, barTop, barRight, barBottom, COLOR_SCROLLBAR_BG);
-        drawRectLocal(barLeft, thumbY, barRight, thumbY + thumbH, COLOR_SCROLLBAR_THUMB);
-    }
-
-    private boolean isMouseOverVerticalScrollbar(int mouseX, int mouseY) {
-        if (vsbMaxScroll <= 0) return false;
-        return mouseX >= vsbBarLeft && mouseX <= vsbBarRight && mouseY >= vsbBarTop && mouseY <= vsbBarBottom;
-    }
-
-    private void updateVerticalScrollbarDrag(int mouseX, int mouseY) {
-        if (vsbMaxScroll <= 0) {
-            isDraggingVScrollbar = false;
-            return;
-        }
-
-        boolean leftDown = Mouse.isButtonDown(0);
-
-        if (!leftDown) {
-            isDraggingVScrollbar = false;
-            return;
-        }
-
-        if (!isMouseOverVerticalScrollbar(mouseX, mouseY)) {
-            if (!isDraggingVScrollbar) {
-                return;
-            }
-        }
-
-        int trackH = (vsbBarBottom - vsbBarTop) - vsbThumbH;
-        if (trackH <= 0) {
-            this.amountScrolled = 0;
-            return;
-        }
-
-        if (isDraggingVScrollbar) {
-            double desiredThumbTop = (double) mouseY - (double) vDragGrabOffsetY;
-            if (desiredThumbTop < vsbBarTop) desiredThumbTop = vsbBarTop;
-            if (desiredThumbTop > vsbBarTop + trackH) desiredThumbTop = vsbBarTop + trackH;
-
-            double t = (desiredThumbTop - vsbBarTop) / (double) trackH;
-            if (t < 0.0) t = 0.0;
-            if (t > 1.0) t = 1.0;
-
-            this.amountScrolled = (float) (t * (double) vsbMaxScroll);
-            clampVerticalScroll();
-            return;
-        }
-
-        int thumbTopNow = vsbThumbY;
-        int thumbBottomNow = vsbThumbY + vsbThumbH;
-
-        if (mouseY >= thumbTopNow && mouseY <= thumbBottomNow) {
-            isDraggingVScrollbar = true;
-            vDragGrabOffsetY = mouseY - thumbTopNow;
-            return;
-        }
-
-        double desiredThumbTop = (double) mouseY - (vsbThumbH / 2.0);
-        if (desiredThumbTop < vsbBarTop) desiredThumbTop = vsbBarTop;
-        if (desiredThumbTop > vsbBarTop + trackH) desiredThumbTop = vsbBarTop + trackH;
-
-        double t = (desiredThumbTop - vsbBarTop) / (double) trackH;
-        if (t < 0.0) t = 0.0;
-        if (t > 1.0) t = 1.0;
-
-        this.amountScrolled = (float) (t * (double) vsbMaxScroll);
-        clampVerticalScroll();
-
-        isDraggingVScrollbar = true;
-        vDragGrabOffsetY = (int) Math.round(mouseY - desiredThumbTop);
     }
 
     public void refreshRows() {
         rebuildRows();
+    }
+
+    private void rebuildRows() {
+        rows.rebuild();
+
+        if (items == null) {
+            return;
+        }
+
+        if (selectedIndex >= rows.size()) {
+            selectedIndex = rows.size() == 0 ? -1 : (rows.size() - 1);
+        }
+
+        clampVerticalScroll();
+    }
+
+    // -------------------------
+    // Selection
+    // -------------------------
+
+    public Jump getSelectedItem() {
+        JumpTableRows.Row row = rows.get(selectedIndex);
+        return row != null ? row.jump : null;
     }
 
     public int getSelectedJumpIndexInItems() {
@@ -737,33 +178,48 @@ public class GuiJumpTableSlot extends GuiSlot {
     }
 
     public void selectJump(Jump jump) {
-        if (jump == null || rows == null || rows.isEmpty()) {
+        if (jump == null || rows.size() == 0) {
             selectedIndex = -1;
             return;
         }
 
         // IMPORTANT: match by reference only, never by equals().
-        for (int i = 0; i < rows.size(); i++) {
-            RowRef rr = rows.get(i);
-            if (rr != null && rr.jump == jump) {
-                selectedIndex = i;
-                return;
-            }
-        }
+        selectedIndex = rows.firstRowOf(jump);
+    }
 
-        selectedIndex = -1;
+    @Override
+    protected boolean isSelected(int index) {
+        return index == selectedIndex;
+    }
+
+    // -------------------------
+    // Scroll state (persisted between initGui rebuilds)
+    // -------------------------
+
+    public int getVerticalScrollPx() {
+        return (int) this.amountScrolled;
+    }
+
+    public void setVerticalScrollPx(int px) {
+        this.amountScrolled = px;
+        clampVerticalScroll();
+    }
+
+    public double getHorizontalScrollPx() {
+        return horizontalScroller.getOffset();
+    }
+
+    public void setHorizontalScrollPx(double px) {
+        horizontalScroller.setOffset(px, getVisibleContentWidth(), getTotalContentWidth());
     }
 
     public void ensureSelectedVisible(int paddingPx) {
         if (paddingPx < 0) paddingPx = 0;
 
-        if (rows == null || rowTops == null || rowHeights == null) return;
         if (selectedIndex < 0 || selectedIndex >= rows.size()) return;
-        if (selectedIndex >= rowTops.size() || selectedIndex >= rowHeights.size()) return;
 
-        int rowTop = rowTops.get(selectedIndex);
-        int rowH = rowHeights.get(selectedIndex);
-        int rowBottom = rowTop + rowH;
+        int rowTop = rows.topOf(selectedIndex);
+        int rowBottom = rowTop + rows.heightOf(selectedIndex);
 
         int visibleH = (this.bottom - this.top);
         if (visibleH <= 0) return;
@@ -793,12 +249,10 @@ public class GuiJumpTableSlot extends GuiSlot {
     }
 
     public void centerSelectedRow() {
-        if (rows == null || rowTops == null || rowHeights == null) return;
         if (selectedIndex < 0 || selectedIndex >= rows.size()) return;
-        if (selectedIndex >= rowTops.size() || selectedIndex >= rowHeights.size()) return;
 
-        int rowTop = rowTops.get(selectedIndex);
-        int rowH = rowHeights.get(selectedIndex);
+        int rowTop = rows.topOf(selectedIndex);
+        int rowH = rows.heightOf(selectedIndex);
 
         int visibleH = (this.bottom - this.top);
         if (visibleH <= 0) return;
@@ -815,162 +269,23 @@ public class GuiJumpTableSlot extends GuiSlot {
         clampVerticalScroll();
     }
 
-    private void rebuildRows() {
-        rows.clear();
-        jumpIndexCache.clear();
+    private void clampVerticalScroll() {
+        int visibleH = (this.bottom - this.top);
+        int maxScroll = Math.max(0, getContentHeight() - visibleH);
 
-        if (items == null) {
-            rebuildRowLayout();
-            return;
-        }
-
-        // Prebuild jump index cache (stable order)
-        for (int i = 0; i < items.size(); i++) {
-            Jump j = items.get(i);
-            if (j != null) {
-                jumpIndexCache.put(j, Integer.valueOf(i));
-            }
-        }
-
-        for (Jump j : items) {
-            if (j == null) {
-                continue;
-            }
-
-            List<Reminder> rems = j.getReminders();
-
-            if (rems == null || rems.isEmpty()) {
-                rows.add(new RowRef(j, null, 0, 1));
-                continue;
-            }
-
-            int groupSize = rems.size();
-            for (int i = 0; i < rems.size(); i++) {
-                rows.add(new RowRef(j, rems.get(i), i, groupSize));
-            }
-        }
-
-        if (selectedIndex >= rows.size()) {
-            selectedIndex = rows.isEmpty() ? -1 : (rows.size() - 1);
-        }
-
-        rebuildRowLayout();
-        clampVerticalScroll();
-    }
-
-    private void rebuildRowLayout() {
-        rowHeights.clear();
-        rowTops.clear();
-        contentHeightPx = 0;
-
-        if (rows == null || rows.isEmpty()) {
-            return;
-        }
-
-        for (int i = 0; i < rows.size(); i++) {
-            rowTops.add(contentHeightPx);
-
-            RowRef rr = rows.get(i);
-            int h = computeRowHeight(i, rr);
-
-            rowHeights.add(h);
-            contentHeightPx += h;
+        if (this.amountScrolled < 0) {
+            this.amountScrolled = 0;
+        } else if (this.amountScrolled > maxScroll) {
+            this.amountScrolled = maxScroll;
         }
     }
 
-    private int computeRowHeight(int rowIndex, RowRef rr) {
-        int minH = 22;
-
-        if (rr == null) {
-            return minH;
-        }
-
-        Reminder r = rr.reminder;
-
-        int maxLines = 1;
-
-        maxLines = Math.max(maxLines, countWrappedLines(String.valueOf(rowIndex + 1), COL_ROW_W));
-        maxLines = Math.max(maxLines, countWrappedLines(getJumpCellText(rr), COL_JUMP_W));
-        maxLines = Math.max(maxLines, countWrappedLines(getPositionFromReminder(r), COL_POS_W));
-        maxLines = Math.max(maxLines, countWrappedLines(getFacingFromReminder(r), COL_FACING_W));
-        maxLines = Math.max(maxLines, countWrappedLines(getReminderField(r, 0), COL_SETUP_W));
-        maxLines = Math.max(maxLines, countWrappedLines(getReminderField(r, 1), COL_STRAT_W));
-        maxLines = Math.max(maxLines, countWrappedLines(getReminderField(r, 2), COL_STRAFE_W));
-        maxLines = Math.max(maxLines, countWrappedLines(getReminderField(r, 3), COL_TURN_W));
-        maxLines = Math.max(maxLines, countWrappedLines(getReminderField(r, 4), COL_AUTHOR_W));
-        maxLines = Math.max(maxLines, countWrappedLines(getReminderField(r, 5), COL_TIPS_W));
-
-        int lineH = font.FONT_HEIGHT;
-        int h = (CELL_PAD_Y * 2) + (maxLines * lineH);
-
-        return Math.max(minH, h);
-    }
-
-    private int countWrappedLines(String text, int colW) {
-        int innerW = Math.max(0, colW - (CELL_PAD_X * 2));
-        if (innerW <= 0) {
-            return 1;
-        }
-
-        String safe = (text != null) ? text : "";
-        if (safe.trim().isEmpty()) {
-            return 1;
-        }
-
-        List<String> lines = font.listFormattedStringToWidth(safe, innerW);
-        if (lines == null || lines.isEmpty()) {
-            return 1;
-        }
-        return lines.size();
-    }
-
-    private String getJumpCellText(RowRef row) {
-        String jumpId = row.jump.getId() != null ? row.jump.getId() : "<null>";
-        int ordinal = row.getOrdinalOneBased();
-        return jumpId + " (" + ordinal + ")";
-    }
-
-    public void setPanelBounds(int left, int right) {
-        this.left = left;
-        this.right = right;
-
-        rebuildRowLayout();
-        clampVerticalScroll();
-    }
-
-    public void handleHorizontalScrollWheel() {
-        int dWheel = Mouse.getDWheel();
-        if (dWheel == 0) {
-            return;
-        }
-
-        boolean shiftDown = Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) || Keyboard.isKeyDown(Keyboard.KEY_RSHIFT);
-        if (!shiftDown) {
-            return;
-        }
-
-        int visible = getVisibleContentWidth();
-        int total = getTotalContentWidth();
-        int maxScroll = Math.max(0, total - visible);
-
-        if (maxScroll <= 0) {
-            xScrollD = 0.0;
-            return;
-        }
-
-        double step = 18.0;
-        if (dWheel > 0) {
-            xScrollD -= step;
-        } else {
-            xScrollD += step;
-        }
-
-        if (xScrollD < 0.0) xScrollD = 0.0;
-        if (xScrollD > maxScroll) xScrollD = maxScroll;
-    }
+    // -------------------------
+    // Geometry
+    // -------------------------
 
     public int getHeaderStartX() {
-        return left + PAD_X - (int) Math.round(xScrollD);
+        return left + PAD_X - (int) Math.round(horizontalScroller.getOffset());
     }
 
     public int getVisibleContentWidth() {
@@ -984,323 +299,209 @@ public class GuiJumpTableSlot extends GuiSlot {
                 + COL_STRAFE_W + COL_TURN_W + COL_AUTHOR_W + COL_TIPS_W) + (PAD_X * 2);
     }
 
-    public void drawVerticalSeparators(int yTop, int yBottom) {
-        int x = getHeaderStartX();
-
-        x += COL_ROW_W;
-        drawVLineLocal(x, yTop, yBottom, COLOR_GRID);
-
-        for (int i = 0; i < sectionColumns; i++) {
-            x += COL_SECTION_W;
-            drawVLineLocal(x, yTop, yBottom, COLOR_GRID);
-        }
-
-        x += COL_JUMP_W;   drawVLineLocal(x, yTop, yBottom, COLOR_GRID);
-        x += COL_POS_W;    drawVLineLocal(x, yTop, yBottom, COLOR_GRID);
-        x += COL_FACING_W; drawVLineLocal(x, yTop, yBottom, COLOR_GRID);
-        x += COL_SETUP_W;  drawVLineLocal(x, yTop, yBottom, COLOR_GRID);
-        x += COL_STRAT_W;  drawVLineLocal(x, yTop, yBottom, COLOR_GRID);
-        x += COL_STRAFE_W; drawVLineLocal(x, yTop, yBottom, COLOR_GRID);
-        x += COL_TURN_W;   drawVLineLocal(x, yTop, yBottom, COLOR_GRID);
-        x += COL_AUTHOR_W; drawVLineLocal(x, yTop, yBottom, COLOR_GRID);
+    @Override
+    public int getListWidth() {
+        int w = (this.right - this.left) - 10;
+        return Math.max(0, w);
     }
 
-    public void drawHorizontalScrollbar(int yTop, int yBottom) {
-        int visible = getVisibleContentWidth();
-        int total = getTotalContentWidth();
-
-        if (total <= visible) {
-            xScrollD = 0.0;
-
-            sbBarLeft = sbBarRight = sbYTop = sbYBottom = sbThumbX = sbThumbW = 0;
-            sbMaxScroll = 0;
-            isDraggingScrollbar = false;
-            return;
-        }
-
-        int barLeft = left + PAD_X;
-        int barRight = right - PAD_X;
-        int barW = barRight - barLeft;
-
-        int thumbW = Math.max(24, (int) ((barW * (double) visible) / (double) total));
-        int maxScroll = total - visible;
-
-        if (xScrollD < 0.0) xScrollD = 0.0;
-        if (xScrollD > maxScroll) xScrollD = maxScroll;
-
-        int trackW = Math.max(0, barW - thumbW);
-
-        double t = (maxScroll <= 0) ? 0.0 : (xScrollD / (double) maxScroll);
-        if (t < 0.0) t = 0.0;
-        if (t > 1.0) t = 1.0;
-
-        int thumbX = barLeft + (int) Math.floor(t * trackW);
-
-        sbBarLeft = barLeft;
-        sbBarRight = barRight;
-        sbYTop = yTop;
-        sbYBottom = yBottom;
-        sbThumbX = thumbX;
-        sbThumbW = thumbW;
-        sbMaxScroll = maxScroll;
-
-        drawRectLocal(barLeft, yTop, barRight, yBottom, 0x44000000);
-        drawRectLocal(thumbX, yTop, thumbX + thumbW, yBottom, 0xAA6666FF);
-    }
-
-    public void updateHorizontalScrollbarDrag(int mouseX, int mouseY) {
-        if (sbMaxScroll <= 0) {
-            isDraggingScrollbar = false;
-            return;
-        }
-
-        boolean leftDown = Mouse.isButtonDown(0);
-
-        if (!leftDown) {
-            isDraggingScrollbar = false;
-            return;
-        }
-
-        if (!(mouseY >= sbYTop && mouseY <= sbYBottom && mouseX >= sbBarLeft && mouseX <= sbBarRight)) {
-            if (!isDraggingScrollbar) {
-                return;
-            }
-        }
-
-        int thumbLeftNow = sbThumbX;
-        int thumbRightNow = sbThumbX + sbThumbW;
-
-        if (isDraggingScrollbar) {
-            int trackW = (sbBarRight - sbBarLeft) - sbThumbW;
-            if (trackW <= 0) {
-                xScrollD = 0.0;
-                return;
-            }
-
-            double desiredThumbLeft = (double) mouseX - (double) dragGrabOffsetX;
-            if (desiredThumbLeft < sbBarLeft) desiredThumbLeft = sbBarLeft;
-            if (desiredThumbLeft > sbBarLeft + trackW) desiredThumbLeft = sbBarLeft + trackW;
-
-            double t = (desiredThumbLeft - sbBarLeft) / (double) trackW;
-            if (t < 0.0) t = 0.0;
-            if (t > 1.0) t = 1.0;
-
-            xScrollD = t * (double) sbMaxScroll;
-
-            if (xScrollD < 0.0) xScrollD = 0.0;
-            if (xScrollD > sbMaxScroll) xScrollD = sbMaxScroll;
-            return;
-        }
-
-        if (mouseX >= thumbLeftNow && mouseX <= thumbRightNow) {
-            isDraggingScrollbar = true;
-            dragGrabOffsetX = mouseX - thumbLeftNow;
-            return;
-        }
-
-        int trackW = (sbBarRight - sbBarLeft) - sbThumbW;
-        if (trackW <= 0) {
-            xScrollD = 0.0;
-            return;
-        }
-
-        double desiredThumbLeft = (double) mouseX - (sbThumbW / 2.0);
-        if (desiredThumbLeft < sbBarLeft) desiredThumbLeft = sbBarLeft;
-        if (desiredThumbLeft > sbBarLeft + trackW) desiredThumbLeft = sbBarLeft + trackW;
-
-        double t = (desiredThumbLeft - sbBarLeft) / (double) trackW;
-        if (t < 0.0) t = 0.0;
-        if (t > 1.0) t = 1.0;
-
-        xScrollD = t * (double) sbMaxScroll;
-
-        isDraggingScrollbar = true;
-        dragGrabOffsetX = (int) Math.round(mouseX - desiredThumbLeft);
-    }
-
-    private boolean isMouseOverScrollbar(int mouseX, int mouseY) {
-        if (sbMaxScroll <= 0) return false;
-        return mouseX >= sbBarLeft && mouseX <= sbBarRight && mouseY >= sbYTop && mouseY <= sbYBottom;
+    @Override
+    protected int getScrollBarX() {
+        int barRight = this.right - 2;
+        return barRight - VerticalScrollbar.WIDTH;
     }
 
     @Override
     protected int getSize() {
-        return rows != null ? rows.size() : 0;
+        return rows.size();
     }
 
     @Override
     protected int getContentHeight() {
-        return contentHeightPx;
+        return rows.getContentHeight();
     }
 
+    // -------------------------
+    // Drawing
+    // -------------------------
+
     @Override
-    protected void elementClicked(int index, boolean ignoredDoubleClickFlag, int mouseX, int mouseY) {
-        if (isMouseOverScrollbar(mouseX, mouseY) || isMouseOverVerticalScrollbar(mouseX, mouseY)) {
+    public void drawScreen(int mouseX, int mouseY, float partialTicks) {
+        enableScissorForSlotViewport();
+        try {
+            drawVariableHeightList();
+        } finally {
+            disableScissor();
+        }
+
+        coverVanillaVerticalScrollbar();
+        verticalScrollbar.draw(this.top, this.bottom, this.right, this.amountScrolled, getContentHeight());
+        this.amountScrolled = verticalScrollbar.updateDrag(mouseX, mouseY, this.amountScrolled);
+        clampVerticalScroll();
+    }
+
+    private void drawVariableHeightList() {
+        clampVerticalScroll();
+
+        int scroll = (int) this.amountScrolled;
+
+        int first = rows.findFirstVisibleRow(scroll);
+        if (first < 0) {
             return;
         }
 
-        long now = Minecraft.getSystemTime();
+        int y = this.top - scroll + rows.topOf(first);
 
-        if (index == lastRawClickIndex && (now - lastRawClickTimeMs) <= DUPLICATE_CLICK_GUARD_MS) {
+        for (int i = first; i < rows.size(); i++) {
+            int h = rows.heightOf(i);
+            int rowTop = y;
+            int rowBottom = y + h;
+
+            if (rowTop > this.bottom) {
+                break;
+            }
+
+            if (rowBottom >= this.top) {
+                drawRow(i, rowTop, rowBottom);
+            }
+
+            y += h;
+        }
+    }
+
+    private void drawRow(int entryID, int rowTop, int rowBottom) {
+        // Zebra background first (row background only)
+        int zebra = (entryID % 2 == 0) ? COLOR_ROW_DARK : COLOR_ROW_LIGHT;
+        GuiDraw.fillRect(this.left, rowTop, this.right, rowBottom, zebra);
+
+        // Selection overlay (row background only)
+        if (entryID == selectedIndex) {
+            GuiDraw.fillRect(this.left, rowTop, this.right, rowBottom, COLOR_ROW_SELECTED);
+        }
+
+        JumpTableRows.Row row = rows.get(entryID);
+        if (row == null || row.jump == null) {
             return;
         }
-        lastRawClickIndex = index;
-        lastRawClickTimeMs = now;
 
-        selectedIndex = index;
+        Reminder r = row.reminder;
 
-        if (handler != null) {
-            handler.onSingleClick(index);
+        int x = getHeaderStartX();
+
+        // Row number
+        drawCellWithGrid(String.valueOf(entryID + 1), x, rowTop, COL_ROW_W, rowBottom, true);
+        x += COL_ROW_W;
+
+        // Section columns: color ONLY these cells, not full rows.
+        boolean isFirstRowOfJump = (row.groupRowIndex == 0);
+        for (int col = 0; col < sectionColumns; col++) {
+            drawSectionCell(col, row, isFirstRowOfJump, x, rowTop, COL_SECTION_W, rowBottom, false);
+            x += COL_SECTION_W;
         }
 
-        boolean isDouble = (index == lastClickedIndex) && ((now - lastClickTimeMs) <= DOUBLE_CLICK_WINDOW_MS);
+        // Jump column
+        drawJumpOrdinalCellWithGrid(row, x, rowTop, COL_JUMP_W, rowBottom, false);
+        x += COL_JUMP_W;
 
-        lastClickedIndex = index;
-        lastClickTimeMs = now;
+        drawCellWithGrid(ReminderColumns.position(r), x, rowTop, COL_POS_W, rowBottom, false);
+        x += COL_POS_W;
 
-        boolean jumpColumnClicked = isJumpColumnClicked(mouseX, mouseY);
-        boolean shiftDown = Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) || Keyboard.isKeyDown(Keyboard.KEY_RSHIFT);
+        drawCellWithGrid(ReminderColumns.facing(r), x, rowTop, COL_FACING_W, rowBottom, false);
+        x += COL_FACING_W;
 
-        if (jumpColumnClicked && handler != null) {
-            handler.onJumpNameClick(index);
+        drawCellWithGrid(ReminderColumns.field(r, 0), x, rowTop, COL_SETUP_W, rowBottom, false);
+        x += COL_SETUP_W;
 
-            if (shiftDown) {
-                handler.onDoubleClick(index);
-                lastClickedIndex = -1;
-                lastClickTimeMs = 0L;
-                return;
+        drawCellWithGrid(ReminderColumns.field(r, 1), x, rowTop, COL_STRAT_W, rowBottom, false);
+        x += COL_STRAT_W;
+
+        drawCellWithGrid(ReminderColumns.field(r, 2), x, rowTop, COL_STRAFE_W, rowBottom, false);
+        x += COL_STRAFE_W;
+
+        drawCellWithGrid(ReminderColumns.field(r, 3), x, rowTop, COL_TURN_W, rowBottom, false);
+        x += COL_TURN_W;
+
+        drawCellWithGrid(ReminderColumns.field(r, 4), x, rowTop, COL_AUTHOR_W, rowBottom, false);
+        x += COL_AUTHOR_W;
+
+        drawCellWithGrid(ReminderColumns.field(r, 5), x, rowTop, COL_TIPS_W, rowBottom, false);
+    }
+
+    /**
+     * Section cell behavior:
+     * - Only the SECTION cell is colored (not the entire row).
+     * - The cell color is the section color if a section exists for (col, jumpIndex).
+     * - If missing for this column, it inherits the color from the nearest LEFT column that has a section at the same jumpIndex.
+     *   (III <- II <- I)
+     * - Section name (bold) is drawn only on the FIRST row of the jump group (first strategy row),
+     *   and only if this column has a real section that starts at this jumpIndex.
+     * - No end-of-section markers are drawn.
+     */
+    private void drawSectionCell(int col, JumpTableRows.Row row, boolean isFirstRowOfJump,
+                                 int x, int yTop, int w, int yBottom, boolean isFirstCol) {
+        int jumpIndex = rows.jumpIndexOf(row.jump);
+
+        // "Direct" section for this column at this jumpIndex (may end as null)
+        MapSection direct = SectionColumns.sectionAt(map, col, jumpIndex);
+
+        MapSection colorSource = direct;
+        if (colorSource == null) {
+            // inherit from nearest left column
+            for (int c = col - 1; c >= 0; c--) {
+                MapSection sLeft = SectionColumns.sectionAt(map, c, jumpIndex);
+                if (sLeft != null) {
+                    colorSource = sLeft;
+                    break;
+                }
             }
         }
 
-        if (isDouble && handler != null) {
-            handler.onDoubleClick(index);
-            lastClickedIndex = -1;
-            lastClickTimeMs = 0L;
-        }
-    }
-
-    private boolean isJumpColumnClicked(int mouseX, int mouseY) {
-        if (mouseY < this.top || mouseY > this.bottom) {
-            return false;
+        if (colorSource != null) {
+            int fill = SectionColumns.tintOpaque(colorSource.getColorArgb(), SECTION_TINT_BASE_RGB, SECTION_TINT_STRENGTH);
+            GuiDraw.fillRect(x, yTop, x + w, yBottom, fill);
         }
 
-        int contentLeftVisible = this.left + PAD_X;
-        int contentRightVisible = this.right - PAD_X;
-
-        if (mouseX < contentLeftVisible || mouseX > contentRightVisible) {
-            return false;
+        // Draw start label only if THIS column has a real section, and it's the start row,
+        // and ONLY on the first row of the jump group (first strategy row).
+        if (isFirstRowOfJump && direct != null && jumpIndex == direct.getStartJumpIndex()) {
+            String name = direct.getName() != null ? direct.getName() : "";
+            if (!name.trim().isEmpty()) {
+                // Use per-section text color (ARGB -> RGB)
+                int rgb = direct.getTextColorArgb() & 0xFFFFFF;
+                drawCellWrapped("\u00A7l" + name + "\u00A7r", x, yTop, w, yBottom, rgb, false);
+            }
         }
 
-        int baseX = getHeaderStartX();
-        int jumpLeft = baseX + COL_ROW_W + (sectionColumns * COL_SECTION_W);
-        int jumpRight = jumpLeft + COL_JUMP_W;
-
-        return mouseX >= jumpLeft && mouseX <= jumpRight;
+        drawCellBorderThin(x, yTop, x + w, yBottom, isFirstCol, false);
     }
 
-    @Override
-    protected boolean isSelected(int index) {
-        return index == selectedIndex;
-    }
+    private void drawJumpOrdinalCellWithGrid(JumpTableRows.Row row, int x, int yTop, int w, int yBottom, boolean isFirstCol) {
+        GuiDraw.fillRect(x, yTop, x + w, yBottom, COLOR_JUMP_COL_FILL);
 
-    @Override
-    protected void drawBackground() {
-        // Parent screen draws background.
-    }
-
-    @Override
-    protected void drawContainerBackground(Tessellator tessellator) {
-        // Intentionally empty.
-    }
-
-    @Override
-    protected void overlayBackground(int startY, int endY, int startAlpha, int endAlpha) {
-        // Intentionally empty.
-    }
-
-    @Override
-    protected void drawSlot(int entryID, int insideLeft, int yPos, int insideSlotHeight, int mouseXIn, int mouseYIn) { }
-
-    private void drawJumpOrdinalCellWithGrid(RowRef row, int x, int yTop, int w, int yBottom, boolean isFirstCol) {
-        drawRectLocal(x, yTop, x + w, yBottom, COLOR_JUMP_COL_FILL);
-
-        String text = getJumpCellText(row);
-
-        drawCellUnderline(text, x, yTop, w, yBottom);
+        drawCellWrapped(JumpTableRows.jumpCellText(row), x, yTop, w, yBottom, 0xFFFFFF, true);
 
         drawCellBorderThin(x, yTop, x + w, yBottom, isFirstCol, false);
     }
 
     private void drawCellWithGrid(String text, int x, int yTop, int w, int yBottom, boolean isFirstCol) {
-        drawCell(text, x, yTop, w, yBottom);
+        drawCellWrapped(text, x, yTop, w, yBottom, 0xFFFFFF, false);
         drawCellBorderThin(x, yTop, x + w, yBottom, isFirstCol, false);
     }
 
     private void drawCellBorderThin(int left, int top, int right, int bottom, boolean drawLeft, boolean drawTop) {
         if (drawTop) {
-            drawRectLocal(left, top, right, top + 1, COLOR_GRID);
+            GuiDraw.fillRect(left, top, right, top + 1, COLOR_GRID);
         }
         if (drawLeft) {
-            drawRectLocal(left, top, left + 1, bottom, COLOR_GRID);
+            GuiDraw.fillRect(left, top, left + 1, bottom, COLOR_GRID);
         }
 
-        drawRectLocal(left, bottom - 1, right, bottom, COLOR_GRID);
-        drawRectLocal(right - 1, top, right, bottom, COLOR_GRID);
+        GuiDraw.fillRect(left, bottom - 1, right, bottom, COLOR_GRID);
+        GuiDraw.fillRect(right - 1, top, right, bottom, COLOR_GRID);
     }
 
-    private static String getPositionFromReminder(Reminder r) {
-        if (r == null || r.lines == null) return "";
-        if (r.lines.size() >= REM_NEW_MIN_SIZE) {
-            return nullSafe(r.lines.get(0));
-        }
-        return "";
-    }
-
-    private static String getFacingFromReminder(Reminder r) {
-        if (r == null || r.lines == null) return "";
-        if (r.lines.size() >= REM_NEW_MIN_SIZE) {
-            return nullSafe(r.lines.get(1));
-        }
-        return "";
-    }
-
-    private static String getReminderField(Reminder r, int fieldIdx) {
-        if (r == null || r.lines == null || fieldIdx < 0 || fieldIdx > 5) {
-            return "";
-        }
-
-        if (r.lines.size() >= REM_NEW_MIN_SIZE) {
-            return getLineSafe(r.lines, REM_NEW_SETUP_OFFSET + fieldIdx);
-        }
-
-        if (r.lines.size() >= REM_PREV_MIN_SIZE) {
-            return getLineSafe(r.lines, fieldIdx);
-        }
-
-        return getLineSafe(r.lines, fieldIdx);
-    }
-
-    private static String getLineSafe(ArrayList<String> lines, int idx) {
-        if (lines == null || idx < 0 || idx >= lines.size()) {
-            return "";
-        }
-        String s = lines.get(idx);
-        return s != null ? s : "";
-    }
-
-    private static String nullSafe(String s) {
-        return s != null ? s : "";
-    }
-
-    private void drawCell(String text, int x, int yTop, int w, int yBottom) {
-        drawCellWrapped(text, x, yTop, w, yBottom, false);
-    }
-
-    private void drawCellUnderline(String text, int x, int yTop, int w, int yBottom) {
-        drawCellWrapped(text, x, yTop, w, yBottom, true);
-    }
-
-    private void drawCellWrapped(String text, int x, int yTop, int w, int yBottom, boolean underlineFirstLine) {
+    /** Draws word-wrapped text clipped to the cell; optionally underlines the first line. */
+    private void drawCellWrapped(String text, int x, int yTop, int w, int yBottom, int rgb, boolean underlineFirstLine) {
         String safe = text != null ? text : "";
         int innerW = Math.max(0, w - (CELL_PAD_X * 2));
         int innerH = Math.max(0, (yBottom - yTop) - (CELL_PAD_Y * 2));
@@ -1330,87 +531,213 @@ public class GuiJumpTableSlot extends GuiSlot {
                 out = "\u00A7n" + out + "\u00A7r";
             }
 
-            font.drawString(out, startX, startY + (i * lineH), 0xFFFFFF, true);
+            font.drawString(out, startX, startY + (i * lineH), rgb, true);
         }
     }
 
-    public Jump getSelectedItem() {
-        if (rows == null) return null;
-        if (selectedIndex < 0 || selectedIndex >= rows.size()) return null;
-        RowRef row = rows.get(selectedIndex);
-        return row != null ? row.jump : null;
-    }
+    public void drawVerticalSeparators(int yTop, int yBottom) {
+        int x = getHeaderStartX();
 
-    // --- Scroll state (persist between initGui rebuilds) ---
+        x += COL_ROW_W;
+        GuiDraw.vLine(x, yTop, yBottom, COLOR_GRID);
 
-    public int getVerticalScrollPx() {
-        return (int) this.amountScrolled;
-    }
-
-    public void setVerticalScrollPx(int px) {
-        this.amountScrolled = px;
-        clampVerticalScroll();
-    }
-
-    public double getHorizontalScrollPx() {
-        return this.xScrollD;
-    }
-
-    public void setHorizontalScrollPx(double px) {
-        this.xScrollD = px;
-        // Reuse existing clamp logic that happens in scrollbar draw,
-        // but keep it sane here as well:
-        if (this.xScrollD < 0.0) this.xScrollD = 0.0;
-
-        int visible = getVisibleContentWidth();
-        int total = getTotalContentWidth();
-        int maxScroll = Math.max(0, total - visible);
-
-        if (this.xScrollD > (double) maxScroll) this.xScrollD = (double) maxScroll;
-    }
-
-    private static void drawVLineLocal(int x, int y1, int y2, int color) {
-        if (y2 < y1) {
-            int tmp = y1;
-            y1 = y2;
-            y2 = tmp;
-        }
-        drawRectLocal(x, y1, x + 1, y2 + 1, color);
-    }
-
-    private static void drawRectLocal(int left, int top, int right, int bottom, int color) {
-        if (left > right) {
-            int tmp = left;
-            left = right;
-            right = tmp;
-        }
-        if (top > bottom) {
-            int tmp = top;
-            top = bottom;
-            bottom = tmp;
+        for (int i = 0; i < sectionColumns; i++) {
+            x += COL_SECTION_W;
+            GuiDraw.vLine(x, yTop, yBottom, COLOR_GRID);
         }
 
-        float a = (color >> 24 & 255) / 255.0F;
-        float r = (color >> 16 & 255) / 255.0F;
-        float g = (color >> 8 & 255) / 255.0F;
-        float b = (color & 255) / 255.0F;
+        x += COL_JUMP_W;   GuiDraw.vLine(x, yTop, yBottom, COLOR_GRID);
+        x += COL_POS_W;    GuiDraw.vLine(x, yTop, yBottom, COLOR_GRID);
+        x += COL_FACING_W; GuiDraw.vLine(x, yTop, yBottom, COLOR_GRID);
+        x += COL_SETUP_W;  GuiDraw.vLine(x, yTop, yBottom, COLOR_GRID);
+        x += COL_STRAT_W;  GuiDraw.vLine(x, yTop, yBottom, COLOR_GRID);
+        x += COL_STRAFE_W; GuiDraw.vLine(x, yTop, yBottom, COLOR_GRID);
+        x += COL_TURN_W;   GuiDraw.vLine(x, yTop, yBottom, COLOR_GRID);
+        x += COL_AUTHOR_W; GuiDraw.vLine(x, yTop, yBottom, COLOR_GRID);
+    }
 
-        Tessellator tessellator = Tessellator.getInstance();
-        WorldRenderer wr = tessellator.getWorldRenderer();
+    public void drawHorizontalScrollbar(int yTop, int yBottom) {
+        horizontalScroller.draw(left + PAD_X, right - PAD_X, yTop, yBottom,
+                getVisibleContentWidth(), getTotalContentWidth());
+    }
 
-        GlStateManager.enableBlend();
+    public void updateHorizontalScrollbarDrag(int mouseX, int mouseY) {
+        horizontalScroller.updateDrag(mouseX, mouseY);
+    }
+
+    /** Hides the vanilla vertical scrollbar, which the custom one replaces. */
+    private void coverVanillaVerticalScrollbar() {
+        int visibleH = (this.bottom - this.top);
+        int maxScroll = Math.max(0, getContentHeight() - visibleH);
+
+        if (maxScroll <= 0) {
+            return;
+        }
+
+        int barLeft = getScrollBarX();
+        int barRight = barLeft + VerticalScrollbar.WIDTH;
+
         GlStateManager.disableTexture2D();
-        GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0);
-        GlStateManager.color(r, g, b, a);
+        GlStateManager.enableBlend();
+        GuiDraw.fillRect(barLeft, this.top, barRight, this.bottom, 0xFF101010);
+    }
 
-        wr.begin(7, DefaultVertexFormats.POSITION);
-        wr.pos(left, bottom, 0).endVertex();
-        wr.pos(right, bottom, 0).endVertex();
-        wr.pos(right, top, 0).endVertex();
-        wr.pos(left, top, 0).endVertex();
-        tessellator.draw();
+    private void enableScissorForSlotViewport() {
+        GuiScissor.enable(this.mc, this.left, this.top, this.right - this.left, this.bottom - this.top);
+    }
 
-        GlStateManager.enableTexture2D();
-        GlStateManager.disableBlend();
+    private void disableScissor() {
+        GuiScissor.disable();
+    }
+
+    @Override
+    protected void drawBackground() {
+        // Parent screen draws background.
+    }
+
+    @Override
+    protected void drawContainerBackground(Tessellator tessellator) {
+        // Intentionally empty.
+    }
+
+    @Override
+    protected void overlayBackground(int startY, int endY, int startAlpha, int endAlpha) {
+        // Intentionally empty.
+    }
+
+    @Override
+    protected void drawSlot(int entryID, int insideLeft, int yPos, int insideSlotHeight, int mouseXIn, int mouseYIn) { }
+
+    // -------------------------
+    // Input
+    // -------------------------
+
+    @Override
+    public void handleMouseInput() {
+        int dWheel = Mouse.getEventDWheel();
+
+        if (!isShiftDown() && dWheel != 0) {
+            if (dWheel > 0) {
+                this.amountScrolled -= WHEEL_STEP;
+            } else {
+                this.amountScrolled += WHEEL_STEP;
+            }
+            clampVerticalScroll();
+        }
+
+        if (Mouse.getEventButton() == 0 && Mouse.getEventButtonState()) {
+            int mouseX = getMouseXScaled();
+            int mouseY = getMouseYScaled();
+
+            if (mouseY >= this.top && mouseY <= this.bottom) {
+                if (verticalScrollbar.isMouseOver(mouseX, mouseY)) {
+                    return;
+                }
+
+                int idx = getRowIndexAt(mouseY);
+                if (idx >= 0 && idx < getSize()) {
+                    elementClicked(idx, false, mouseX, mouseY);
+                }
+            }
+        }
+    }
+
+    /** Shift + wheel scrolls horizontally. */
+    public void handleHorizontalScrollWheel() {
+        int dWheel = Mouse.getDWheel();
+        if (dWheel == 0) {
+            return;
+        }
+
+        if (!isShiftDown()) {
+            return;
+        }
+
+        horizontalScroller.scrollByWheel(dWheel, getVisibleContentWidth(), getTotalContentWidth());
+    }
+
+    @Override
+    protected void elementClicked(int index, boolean ignoredDoubleClickFlag, int mouseX, int mouseY) {
+        if (horizontalScroller.isMouseOver(mouseX, mouseY) || verticalScrollbar.isMouseOver(mouseX, mouseY)) {
+            return;
+        }
+
+        long now = Minecraft.getSystemTime();
+
+        if (index == lastRawClickIndex && (now - lastRawClickTimeMs) <= DUPLICATE_CLICK_GUARD_MS) {
+            return;
+        }
+        lastRawClickIndex = index;
+        lastRawClickTimeMs = now;
+
+        selectedIndex = index;
+
+        if (handler != null) {
+            handler.onSingleClick(index);
+        }
+
+        boolean isDouble = (index == lastClickedIndex) && ((now - lastClickTimeMs) <= DOUBLE_CLICK_WINDOW_MS);
+
+        lastClickedIndex = index;
+        lastClickTimeMs = now;
+
+        boolean jumpColumnClicked = isJumpColumnClicked(mouseX, mouseY);
+
+        if (jumpColumnClicked && handler != null) {
+            handler.onJumpNameClick(index);
+
+            if (isShiftDown()) {
+                handler.onDoubleClick(index);
+                lastClickedIndex = -1;
+                lastClickTimeMs = 0L;
+                return;
+            }
+        }
+
+        if (isDouble && handler != null) {
+            handler.onDoubleClick(index);
+            lastClickedIndex = -1;
+            lastClickTimeMs = 0L;
+        }
+    }
+
+    private int getRowIndexAt(int mouseY) {
+        if (mouseY < this.top || mouseY > this.bottom) {
+            return -1;
+        }
+
+        int yInContent = (int) this.amountScrolled + (mouseY - this.top);
+        return rows.rowIndexAtContentY(yInContent);
+    }
+
+    private boolean isJumpColumnClicked(int mouseX, int mouseY) {
+        if (mouseY < this.top || mouseY > this.bottom) {
+            return false;
+        }
+
+        int contentLeftVisible = this.left + PAD_X;
+        int contentRightVisible = this.right - PAD_X;
+
+        if (mouseX < contentLeftVisible || mouseX > contentRightVisible) {
+            return false;
+        }
+
+        int baseX = getHeaderStartX();
+        int jumpLeft = baseX + COL_ROW_W + (sectionColumns * COL_SECTION_W);
+        int jumpRight = jumpLeft + COL_JUMP_W;
+
+        return mouseX >= jumpLeft && mouseX <= jumpRight;
+    }
+
+    private static boolean isShiftDown() {
+        return Keyboard.isKeyDown(Keyboard.KEY_LSHIFT) || Keyboard.isKeyDown(Keyboard.KEY_RSHIFT);
+    }
+
+    private int getMouseXScaled() {
+        return Mouse.getEventX() * this.width / this.mc.displayWidth;
+    }
+
+    private int getMouseYScaled() {
+        return this.height - (Mouse.getEventY() * this.height / this.mc.displayHeight) - 1;
     }
 }

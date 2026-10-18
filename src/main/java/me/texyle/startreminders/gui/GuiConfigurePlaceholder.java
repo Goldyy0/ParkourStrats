@@ -2,13 +2,15 @@ package me.texyle.startreminders.gui;
 
 import java.io.IOException;
 
-import me.texyle.startreminders.data.ParkourMap;
-import me.texyle.startreminders.reminders.ReminderManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.util.EnumChatFormatting;
+
+import me.texyle.startreminders.data.ParkourMap;
+import me.texyle.startreminders.reminders.SelectionState;
+import me.texyle.startreminders.sheets.PlaceholderSyncService;
 
 public class GuiConfigurePlaceholder extends GuiScreen {
 
@@ -53,7 +55,7 @@ public class GuiConfigurePlaceholder extends GuiScreen {
         urlField.setFocused(true);
         urlField.setMaxStringLength(512);
 
-        ParkourMap map = ReminderManager.getSelectedMap();
+        ParkourMap map = SelectionState.getSelectedMap();
         if (map != null) {
             urlField.setText(map.getPlaceholderSheetUrl());
         }
@@ -120,7 +122,7 @@ public class GuiConfigurePlaceholder extends GuiScreen {
         }
 
         if (button.id == 2) { // Sync jumps
-            ParkourMap map = ReminderManager.getSelectedMap();
+            ParkourMap map = SelectionState.getSelectedMap();
             if (map == null) {
                 statusText = EnumChatFormatting.RED + "Select a map first.";
                 return;
@@ -138,9 +140,9 @@ public class GuiConfigurePlaceholder extends GuiScreen {
             updateButtons();
 
             // Persist URL + enable mode immediately, list will arrive async
-            ReminderManager.enablePlaceholderSyncForMap(map, url);
+            PlaceholderSyncService.enablePlaceholderSyncForMap(map, url);
 
-            ReminderManager.requestPlaceholderJumpListSync(map, new ReminderManager.IPlaceholderJumpSyncCallback() {
+            PlaceholderSyncService.requestPlaceholderJumpListSync(map, new PlaceholderSyncService.IPlaceholderJumpSyncCallback() {
                 @Override
                 public void onSuccess(int count) {
                     statusText = EnumChatFormatting.GREEN + "Jump list loaded (" + count + ").";
@@ -159,9 +161,9 @@ public class GuiConfigurePlaceholder extends GuiScreen {
         }
 
         if (button.id == 3) { // Stop Sync
-            ParkourMap map = ReminderManager.getSelectedMap();
+            ParkourMap map = SelectionState.getSelectedMap();
             if (map != null) {
-                ReminderManager.disablePlaceholderSyncForMap(map);
+                PlaceholderSyncService.disablePlaceholderSyncForMap(map);
             }
             statusText = EnumChatFormatting.YELLOW + "Placeholder sync disabled.";
             Minecraft.getMinecraft().displayGuiScreen(parent);
@@ -172,12 +174,12 @@ public class GuiConfigurePlaceholder extends GuiScreen {
     }
 
     private void updateButtons() {
-        ParkourMap map = ReminderManager.getSelectedMap();
+        ParkourMap map = SelectionState.getSelectedMap();
 
         boolean hasMap = (map != null);
         boolean hasUrl = (urlField != null && urlField.getText() != null && urlField.getText().trim().length() > 0);
 
-        if (syncButton != null) syncButton.enabled = hasMap && hasUrl && !ReminderManager.isAnySheetSyncInProgress();
+        if (syncButton != null) syncButton.enabled = hasMap && hasUrl && !PlaceholderSyncService.isAnySheetSyncInProgress();
         if (stopButton != null) stopButton.enabled = hasMap && map.isPlaceholderSyncEnabled();
     }
 

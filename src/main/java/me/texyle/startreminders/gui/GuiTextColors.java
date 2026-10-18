@@ -4,13 +4,14 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
-import me.texyle.startreminders.reminders.ReminderManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.util.EnumChatFormatting;
 import net.minecraft.util.ResourceLocation;
+
+import me.texyle.startreminders.reminders.UserPreferences;
 
 public class GuiTextColors extends GuiScreen {
 
@@ -97,8 +98,8 @@ public class GuiTextColors extends GuiScreen {
 
     public GuiTextColors(GuiScreen parent) {
         this.parent = parent;
-        this.selectedJumpNameCode = ReminderManager.getGlobalInWorldJumpNameColor();
-        this.selectedTextCode = ReminderManager.getGlobalInWorldTextColor();
+        this.selectedJumpNameCode = UserPreferences.getGlobalInWorldJumpNameColor();
+        this.selectedTextCode = UserPreferences.getGlobalInWorldTextColor();
     }
 
     @Override
@@ -233,8 +234,8 @@ public class GuiTextColors extends GuiScreen {
         }
 
         if (button.id == BTN_DONE) {
-            ReminderManager.setGlobalInWorldJumpNameColor(selectedJumpNameCode);
-            ReminderManager.setGlobalInWorldTextColor(selectedTextCode);
+            UserPreferences.setGlobalInWorldJumpNameColor(selectedJumpNameCode);
+            UserPreferences.setGlobalInWorldTextColor(selectedTextCode);
             Minecraft.getMinecraft().displayGuiScreen(parent);
             return;
         }

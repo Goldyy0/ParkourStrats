@@ -4,17 +4,19 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 
-import javax.swing.JFileChooser;
-import javax.swing.SwingUtilities;
-
-import me.texyle.startreminders.data.ParkourMap;
-import me.texyle.startreminders.data.ServerProfile;
-import me.texyle.startreminders.reminders.ReminderManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
-import net.minecraft.util.ChatComponentText;
-import net.minecraft.util.EnumChatFormatting;
+
+import me.texyle.startreminders.data.ParkourMap;
+import me.texyle.startreminders.data.ServerProfile;
+import me.texyle.startreminders.gui.FileDialogs;
+import me.texyle.startreminders.importing.MapTemplateIO;
+import me.texyle.startreminders.persistence.BuiltinContainers;
+import me.texyle.startreminders.reminders.SelectionState;
+import me.texyle.startreminders.services.MapService;
+import me.texyle.startreminders.sheets.SheetTemplateSync;
+import me.texyle.startreminders.utils.ChatUtils;
 
 public class GuiMapList extends GuiScreen {
 
@@ -95,7 +97,7 @@ public class GuiMapList extends GuiScreen {
                             return;
                         }
 
-                        ReminderManager.setSelectedMap(selected);
+                        SelectionState.setSelectedMap(selected);
 
                         // Picker mode: return selection to caller
                         if (pickHandler != null) {
@@ -110,7 +112,7 @@ public class GuiMapList extends GuiScreen {
                 }
         );
 
-        boolean isProtected = ReminderManager.isProtectedServer(server);
+        boolean isProtected = BuiltinContainers.isProtectedServer(server);
         boolean isPickerMode = (pickHandler != null);
 
         backButton = new GuiButton(BTN_BACK, 8, 8, 60, 20, "Back");
@@ -170,7 +172,7 @@ public class GuiMapList extends GuiScreen {
     }
 
     private void refreshData() {
-        maps = new ArrayList<ParkourMap>(ReminderManager.getMaps(server));
+        maps = new ArrayList<ParkourMap>(MapService.getMaps(server));
     }
 
     private void updateButtonStates() {
@@ -233,7 +235,7 @@ public class GuiMapList extends GuiScreen {
             return;
         }
 
-        boolean isProtected = ReminderManager.isProtectedServer(server);
+        boolean isProtected = BuiltinContainers.isProtectedServer(server);
         boolean isPickerMode = (pickHandler != null);
 
         // Picker mode: no management actions allowed.
@@ -273,8 +275,8 @@ public class GuiMapList extends GuiScreen {
                     new GuiTextPrompt.IResultHandler() {
                         @Override
                         public void onConfirm(String text) {
-                            ReminderManager.setSheetUrlForMap(selected, text);
-                            ReminderManager.requestSheetSyncForMap(server, selected, true);
+                            SheetTemplateSync.setSheetUrlForMap(selected, text);
+                            SheetTemplateSync.requestSheetSyncForMap(server, selected, true);
                             initGui();
                         }
 
@@ -291,7 +293,7 @@ public class GuiMapList extends GuiScreen {
             }
 
             // Manual sync trigger (no auto-sync anymore)
-            ReminderManager.requestSheetSyncForMap(server, selected, true);
+            SheetTemplateSync.requestSheetSyncForMap(server, selected, true);
             initGui();
             return;
         }
@@ -319,7 +321,7 @@ public class GuiMapList extends GuiScreen {
                     new GuiConfirm.IConfirmHandler() {
                         @Override
                         public void onYes() {
-                            ReminderManager.removeMap(server, selected);
+                            MapService.removeMap(server, selected);
                             initGui();
                         }
 
@@ -331,98 +333,37 @@ public class GuiMapList extends GuiScreen {
     }
 
     private void openExportDialog(final ParkourMap selected) {
-        new Thread(new Runnable() {
+        String suggested = (selected.getId() != null ? selected.getId() : "map") + ".json";
+
+        FileDialogs.chooseSaveFile("Export Template (.json)", suggested, new FileDialogs.FileHandler() {
             @Override
-            public void run() {
+            public void onFile(File file) {
                 try {
-                    final File[] chosen = new File[1];
-
-                    SwingUtilities.invokeAndWait(new Runnable() {
-                        @Override
-                        public void run() {
-                            JFileChooser chooser = new JFileChooser();
-                            chooser.setDialogTitle("Export Template (.json)");
-                            chooser.setSelectedFile(new File((selected.getId() != null ? selected.getId() : "map") + ".json"));
-                            int result = chooser.showSaveDialog(null);
-                            if (result == JFileChooser.APPROVE_OPTION) {
-                                chosen[0] = chooser.getSelectedFile();
-                            }
-                        }
-                    });
-
-                    if (chosen[0] == null) return;
-
-                    Minecraft.getMinecraft().addScheduledTask(new Runnable() {
-                        @Override
-                        public void run() {
-                            try {
-                                ReminderManager.exportMapTemplateToFile(server, selected, chosen[0]);
-                                sendClientChat(EnumChatFormatting.DARK_AQUA + "[ParkourStrats] " + EnumChatFormatting.AQUA
-                                        + "Exported template: " + chosen[0].getName());
-                            } catch (Exception ex) {
-                                ex.printStackTrace();
-                                sendClientChat(EnumChatFormatting.DARK_AQUA + "[ParkourStrats] " + EnumChatFormatting.RED
-                                        + "Export failed. See logs.");
-                            }
-                        }
-                    });
-
+                    MapTemplateIO.exportMapTemplateToFile(server, selected, file);
+                    ChatUtils.info("Exported template: " + file.getName());
                 } catch (Exception ex) {
                     ex.printStackTrace();
+                    ChatUtils.error("Export failed. See logs.");
                 }
             }
-        }).start();
+        });
     }
 
     private void openImportDialog() {
-        new Thread(new Runnable() {
+        FileDialogs.chooseOpenFile("Import Template (.json)", new FileDialogs.FileHandler() {
             @Override
-            public void run() {
+            public void onFile(File file) {
                 try {
-                    final File[] chosen = new File[1];
-
-                    SwingUtilities.invokeAndWait(new Runnable() {
-                        @Override
-                        public void run() {
-                            JFileChooser chooser = new JFileChooser();
-                            chooser.setDialogTitle("Import Template (.json)");
-                            int result = chooser.showOpenDialog(null);
-                            if (result == JFileChooser.APPROVE_OPTION) {
-                                chosen[0] = chooser.getSelectedFile();
-                            }
-                        }
-                    });
-
-                    if (chosen[0] == null) return;
-
-                    Minecraft.getMinecraft().addScheduledTask(new Runnable() {
-                        @Override
-                        public void run() {
-                            try {
-                                ReminderManager.importMapTemplateFromFile(server, chosen[0]);
-                                refreshData();
-                                initGui();
-                                sendClientChat(EnumChatFormatting.DARK_AQUA + "[ParkourStrats] " + EnumChatFormatting.AQUA
-                                        + "Imported template: " + chosen[0].getName());
-                            } catch (Exception ex) {
-                                ex.printStackTrace();
-                                sendClientChat(EnumChatFormatting.DARK_AQUA + "[ParkourStrats] " + EnumChatFormatting.RED
-                                        + "Import failed. See logs.");
-                            }
-                        }
-                    });
-
+                    MapTemplateIO.importMapTemplateFromFile(server, file);
+                    refreshData();
+                    initGui();
+                    ChatUtils.info("Imported template: " + file.getName());
                 } catch (Exception ex) {
                     ex.printStackTrace();
+                    ChatUtils.error("Import failed. See logs.");
                 }
             }
-        }).start();
-    }
-
-    private void sendClientChat(String msg) {
-        Minecraft mc = Minecraft.getMinecraft();
-        if (mc == null || mc.thePlayer == null || msg == null) return;
-        mc.thePlayer.addChatMessage(new ChatComponentText(msg));
+        });
     }
 
     @Override
