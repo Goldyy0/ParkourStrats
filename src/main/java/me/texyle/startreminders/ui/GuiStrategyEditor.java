@@ -259,9 +259,9 @@ public class GuiStrategyEditor extends UiScreen {
 
         EntityPlayerSP player = Minecraft.getMinecraft().thePlayer;
         if (sx == 0 && sy == 0 && sz == 0 && player != null) {
-            sx = (int) Math.floor(player.posX);
-            sy = (int) Math.floor(player.posY) + 1;
-            sz = (int) Math.floor(player.posZ);
+            sx = PlayerBlockPos.x(player);
+            sy = PlayerBlockPos.jumpY(player);
+            sz = PlayerBlockPos.z(player);
         }
 
         coordX.setText(Integer.toString(sx));

@@ -51,6 +51,13 @@ public final class UiDraw {
         return font().trimStringToWidth(s, Math.max(0, maxWidth));
     }
 
+    /** Like {@link #fit}, but ends in "..." when something was cut off. */
+    public static String ellipsize(String s, int maxWidth) {
+        if (s == null) return "";
+        if (width(s) <= maxWidth) return s;
+        return font().trimStringToWidth(s, Math.max(0, maxWidth - width("..."))) + "...";
+    }
+
     public static boolean inside(int mx, int my, int x, int y, int w, int h) {
         return mx >= x && mx < x + w && my >= y && my < y + h;
     }

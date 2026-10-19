@@ -7,6 +7,7 @@ import net.minecraftforge.client.event.RenderWorldLastEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 
 import me.texyle.startreminders.StratReminders;
+import me.texyle.startreminders.reminders.UserPreferences;
 import me.texyle.startreminders.data.DataStore;
 import me.texyle.startreminders.data.Jump;
 import me.texyle.startreminders.data.ParkourMap;
@@ -18,14 +19,24 @@ import me.texyle.startreminders.reminders.UserPreferences;
 import me.texyle.startreminders.services.StrategyService;
 import me.texyle.startreminders.utils.DrawUtils;
 
-/** Draws the strategies of nearby jumps in the world while the show key is held or the toggle is on. */
+/** Draws the strategies of nearby jumps in the world while the show key is held (HOLD) or toggled on (TOGGLE). */
 public class NearbyJumpRenderer {
 
 	private static boolean toggled = false;
 
-	/** Flips the "always show nearby strategies" mode (the toggle key). */
-	public static void toggle() {
-		toggled = !toggled;
+	/** The show key went down: flips the display in TOGGLE mode (in HOLD mode the key state is read directly). */
+	public static void onShowKeyPressed() {
+		if (UserPreferences.isShowKeyToggle()) {
+			toggled = !toggled;
+		}
+	}
+
+	private static boolean shouldShow() {
+		if (UserPreferences.isShowKeyToggle()) {
+			return toggled;
+		}
+		toggled = false;
+		return StratReminders.showKey.isKeyDown();
 	}
 
 	// Nearby rendering radius (blocks)
@@ -37,7 +48,7 @@ public class NearbyJumpRenderer {
 	public void onWorldRender(RenderWorldLastEvent event) {
 		DataStoreRepository.ensureLoaded();
 
-		if (!(StratReminders.showKey.isKeyDown() || toggled)) {
+		if (!shouldShow()) {
 			return;
 		}
 

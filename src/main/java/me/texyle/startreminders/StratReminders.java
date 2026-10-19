@@ -25,12 +25,11 @@ public class StratReminders {
 	public static StratReminders instance;
 
 	public static KeyBinding createKey = new KeyBinding("Create strategies", Keyboard.KEY_Y, "Parkour Strats");
-	public static KeyBinding showKey = new KeyBinding("Show nearby strategies", Keyboard.KEY_Z, "Parkour Strats");
-	public static KeyBinding toggleKey = new KeyBinding("Toggle nearby strategies", Keyboard.KEY_V, "Parkour Strats");
+	public static KeyBinding showKey = new KeyBinding("Show nearby strategies", Keyboard.KEY_X, "Parkour Strats");
 	public static KeyBinding editKey = new KeyBinding("Edit strategies", Keyboard.KEY_B, "Parkour Strats");
 
 	// Step C: open hierarchy UI (Server -> Map -> Jump).
-	public static KeyBinding hierarchyKey = new KeyBinding("Open hierarchy UI", Keyboard.KEY_N, "Parkour Strats");
+	public static KeyBinding hierarchyKey = new KeyBinding("Open mod menu", Keyboard.KEY_N, "Parkour Strats");
 
 	@Mod.EventHandler
 	public void preInit(FMLPreInitializationEvent  event) {
@@ -45,7 +44,6 @@ public class StratReminders {
 
 		ClientRegistry.registerKeyBinding(createKey);
 		ClientRegistry.registerKeyBinding(showKey);
-		ClientRegistry.registerKeyBinding(toggleKey);
 		ClientRegistry.registerKeyBinding(editKey);
 		ClientRegistry.registerKeyBinding(hierarchyKey);
 	}

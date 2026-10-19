@@ -20,4 +20,12 @@ public class ModSettings {
 
     // Strategy editor: extra decimals (0..5) in the live position readout. Default is 0.
     public int playerInfoExtraDecimals = 0;
+
+    // Show-strategies key: true = press to toggle, false = hold. Default is true.
+    public boolean showKeyToggle = true;
+
+    // Where a new strategy label is placed: blocks in front of the player (0..5, default 1) and blocks above
+    // the feet block (0..5, default 2).
+    public int labelForward = 1;
+    public int labelUp = 2;
 }

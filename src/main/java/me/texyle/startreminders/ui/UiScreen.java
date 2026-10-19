@@ -125,6 +125,7 @@ public abstract class UiScreen extends GuiScreen {
         UiDraw.text(getTitle().toUpperCase(), panelX + UiTheme.PADDING + 2, panelY + 11, UiTheme.TEXT);
         UiDraw.fill(panelX + 1, panelY + 28, panelW - 2, 1, UiTheme.PANEL_BORDER);
 
+        UiTextField.clearTooltip();
         closeButton.draw(mouseX, mouseY);
         drawContent(mouseX, mouseY, partialTicks);
 
@@ -133,6 +134,7 @@ public abstract class UiScreen extends GuiScreen {
         }
 
         popup.draw(mouseX, mouseY);
+        if (!popup.isOpen()) UiTextField.drawTooltip(mouseX, mouseY);
     }
 
     @Override

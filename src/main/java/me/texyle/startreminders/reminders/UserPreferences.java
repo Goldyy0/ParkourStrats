@@ -30,6 +30,36 @@ public final class UserPreferences {
 		SettingsRepository.save();
 	}
 
+	/** True: the show key toggles the in-world strategies; false: they show while it is held. */
+	public static boolean isShowKeyToggle() {
+		return SettingsRepository.get().showKeyToggle;
+	}
+
+	public static void setShowKeyToggle(boolean toggle) {
+		SettingsRepository.get().showKeyToggle = toggle;
+		SettingsRepository.save();
+	}
+
+	/** Blocks in front of the player (0..5) where a new strategy label is placed. */
+	public static int getLabelForward() {
+		return Math.max(0, Math.min(5, SettingsRepository.get().labelForward));
+	}
+
+	public static void setLabelForward(int blocks) {
+		SettingsRepository.get().labelForward = Math.max(0, Math.min(5, blocks));
+		SettingsRepository.save();
+	}
+
+	/** Blocks above the player's feet block (0..5) where a new strategy label is placed. */
+	public static int getLabelUp() {
+		return Math.max(0, Math.min(5, SettingsRepository.get().labelUp));
+	}
+
+	public static void setLabelUp(int blocks) {
+		SettingsRepository.get().labelUp = Math.max(0, Math.min(5, blocks));
+		SettingsRepository.save();
+	}
+
 	/** Extra decimals (0..5) shown in the strategy editor live position readout. */
 	public static int getPlayerInfoExtraDecimals() {
 		return Math.max(0, Math.min(5, SettingsRepository.get().playerInfoExtraDecimals));

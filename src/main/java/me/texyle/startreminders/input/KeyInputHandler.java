@@ -44,8 +44,8 @@ public class KeyInputHandler {
 			player.openGui(StratReminders.instance, 2, world,
 					(int) player.posX, (int) player.posY, (int) player.posZ);
 		}
-		else if (StratReminders.toggleKey.isKeyDown()) {
-			NearbyJumpRenderer.toggle();
+		else if (StratReminders.showKey.isKeyDown()) {
+			NearbyJumpRenderer.onShowKeyPressed();
 		}
 	}
 }
