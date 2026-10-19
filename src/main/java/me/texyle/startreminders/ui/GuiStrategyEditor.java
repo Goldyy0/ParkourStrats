@@ -14,6 +14,7 @@ import org.lwjgl.input.Mouse;
 import me.texyle.startreminders.data.Jump;
 import me.texyle.startreminders.data.ParkourMap;
 import me.texyle.startreminders.gui.StrategyFormat;
+import me.texyle.startreminders.input.TapRecorder;
 import me.texyle.startreminders.gui.hierarchy.GuiConfirm;
 import me.texyle.startreminders.persistence.DataStoreRepository;
 import me.texyle.startreminders.reminders.JumpPicker;
@@ -204,7 +205,11 @@ public class GuiStrategyEditor extends UiScreen {
             fields[i] = add(new UiTextField(draft != null ? draft[i] : "", max), fieldX, rowY, fieldW, fieldH);
             if (i == 0 && !restored) {
                 // ">" right of the POSITION label: fills the field with where the player stands.
-                add(new PositionFillButton(), contentX + UiDraw.width("POSITION") + 5, rowY, 12, fieldH);
+                add(new FieldArrow(this::fillPosition), contentX + UiDraw.width("POSITION") + 5, rowY, 12, fieldH);
+            }
+            if (i == 2 && !restored) {
+                // ">" right of the SETUP label: records the taps the player makes.
+                add(new FieldArrow(this::recordSetup), contentX + UiDraw.width("SETUP") + 5, rowY, 12, fieldH);
             }
             rowY += rowH;
         }
@@ -616,8 +621,38 @@ public class GuiStrategyEditor extends UiScreen {
                 }));
     }
 
-    /** The small ">" next to the POSITION label. */
-    private final class PositionFillButton extends UiWidget {
+    private void recordSetup() {
+        if (fields[2].getText().trim().isEmpty()) {
+            beginTapRecording();
+            return;
+        }
+
+        Minecraft.getMinecraft().displayGuiScreen(new GuiConfirm(this, "Overwrite setup",
+                "SETUP is not empty. Overwrite it?", new GuiConfirm.IConfirmHandler() {
+                    @Override
+                    public void onYes() {
+                        beginTapRecording();
+                    }
+
+                    @Override
+                    public void onNo() { }
+                }));
+    }
+
+    /** Leaves the window while the player taps; the recorded taps come back into SETUP when it ends. */
+    private void beginTapRecording() {
+        final GuiStrategyEditor editor = this;
+        TapRecorder.start(text -> editor.fields[2].setText(text), this);
+    }
+
+    /** A small ">" next to a field's label that runs an action. */
+    private final class FieldArrow extends UiWidget {
+        private final Runnable action;
+
+        FieldArrow(Runnable action) {
+            this.action = action;
+        }
+
         @Override
         public void draw(int mouseX, int mouseY) {
             boolean hover = contains(mouseX, mouseY);
@@ -627,7 +662,7 @@ public class GuiStrategyEditor extends UiScreen {
         @Override
         public boolean mouseClicked(int mouseX, int mouseY, int button) {
             if (button != 0 || !contains(mouseX, mouseY)) return false;
-            fillPosition();
+            action.run();
             return true;
         }
     }
