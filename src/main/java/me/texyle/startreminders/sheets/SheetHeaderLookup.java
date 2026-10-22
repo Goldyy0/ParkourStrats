@@ -34,6 +34,32 @@ public final class SheetHeaderLookup {
 		// Critical: accept "by" as Author
 		if (cols.author < 0) cols.author = findHeaderIndex(header, "by", "author", "creator");
 		if (cols.tips < 0) cols.tips = findHeaderIndex(header, "tips", "notes", "note");
+
+		// Headers with a remark in brackets, e.g. "Position (Red=SP)".
+		if (cols.position < 0) cols.position = findHeaderIndexIgnoringBrackets(header, "position", "pos");
+		if (cols.facing < 0) cols.facing = findHeaderIndexIgnoringBrackets(header, "facing", "face");
+		if (cols.setup < 0) cols.setup = findHeaderIndexIgnoringBrackets(header, "setup");
+		if (cols.strategy < 0) cols.strategy = findHeaderIndexIgnoringBrackets(header, "strategy", "strat");
+		if (cols.strafe < 0) cols.strafe = findHeaderIndexIgnoringBrackets(header, "strafe");
+		if (cols.turn < 0) cols.turn = findHeaderIndexIgnoringBrackets(header, "turn");
+		if (cols.author < 0) cols.author = findHeaderIndexIgnoringBrackets(header, "by", "author", "creator");
+		if (cols.tips < 0) cols.tips = findHeaderIndexIgnoringBrackets(header, "tips", "notes", "note");
+	}
+
+	private static int findHeaderIndexIgnoringBrackets(List<String> header, String... candidates) {
+		if (header == null || candidates == null) return -1;
+
+		for (int i = 0; i < header.size(); i++) {
+			String h = header.get(i);
+			if (h == null) continue;
+			String stripped = normalizeHeader(h.replaceAll("\\(.*?\\)|\\[.*?\\]", " "));
+			if (stripped.isEmpty()) continue;
+
+			for (String c : candidates) {
+				if (c != null && stripped.equals(normalizeHeader(c))) return i;
+			}
+		}
+		return -1;
 	}
 
 	private static int findHeaderIndex(List<String> header, String... candidates) {

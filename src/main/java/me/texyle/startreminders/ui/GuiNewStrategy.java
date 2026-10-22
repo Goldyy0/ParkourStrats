@@ -18,18 +18,14 @@ import me.texyle.startreminders.services.JumpService;
 import me.texyle.startreminders.services.MapService;
 import me.texyle.startreminders.services.SectionLayoutService;
 import me.texyle.startreminders.services.ServerService;
-import me.texyle.startreminders.sheets.PlaceholderSyncService;
 import me.texyle.startreminders.ui.UiPopup.Entry;
 import me.texyle.startreminders.utils.IdRules;
 
 /**
  * First step of adding a strategy: name the jump and choose where it lives (server, map, optional section).
- * "Continue" opens the strategy editor. When a placeholder sheet is linked, the jump name can be paged
- * through the names in the sheet.
+ * "Continue" opens the strategy editor.
  */
 public class GuiNewStrategy extends UiScreen {
-
-    private static final String PLACEHOLDER_TEXT = "PLACEHOLDER";
 
     private static final int ROW_H = 28;
     private static final int LABEL_W = 84;
@@ -47,14 +43,12 @@ public class GuiNewStrategy extends UiScreen {
 
     // Survives screen rebuilds (resize, coming back from sub-dialogs).
     private String nameDraft = "";
-    private boolean pagerShown;
 
     private UiTextField nameField;
     private UiDropdown serverDropdown;
     private UiDropdown mapDropdown;
     private UiDropdown sectionDropdown;
     private UiButton continueButton;
-    private UiButton moreButton;
 
     public GuiNewStrategy(GuiScreen parent, GuiScreen after) {
         super(parent);
@@ -103,7 +97,7 @@ public class GuiNewStrategy extends UiScreen {
 
     @Override
     protected int getPanelHeight() {
-        return 250 + (PlaceholderSyncService.isPlaceholderSyncEnabledForSelectedMap() ? 2 * ROW_H : 0);
+        return 250;
     }
 
     @Override
@@ -112,35 +106,11 @@ public class GuiNewStrategy extends UiScreen {
         int fieldW = w - LABEL_W;
         int rowY = y;
 
-        pagerShown = PlaceholderSyncService.isPlaceholderSyncEnabledForSelectedMap();
-        if (pagerShown) {
-            if (PlaceholderSyncService.getPlaceholderSectionCount() > 0) {
-                add(new UiLabel(this::sectionPagerText, UiTheme.TEXT), fieldX + 56, rowY + 6, fieldW - 112, 10).centered();
-                add(new UiButton("<", UiButton.Style.SECONDARY, () -> stepSection(-1)), fieldX, rowY, 24, 20);
-                add(new UiButton(">", UiButton.Style.SECONDARY, () -> stepSection(1)), fieldX + fieldW - 24, rowY, 24, 20);
-            }
-            rowY += ROW_H;
-
-            add(new UiLabel(this::jumpPagerText, UiTheme.TEXT), fieldX + 56, rowY + 6, fieldW - 112, 10).centered();
-            add(new UiButton("<", UiButton.Style.SECONDARY, () -> {
-                PlaceholderSyncService.prevPlaceholderJump();
-                showPlaceholderName();
-            }), fieldX, rowY, 24, 20);
-            add(new UiButton(">", UiButton.Style.SECONDARY, () -> {
-                PlaceholderSyncService.nextPlaceholderJump();
-                showPlaceholderName();
-            }), fieldX + fieldW - 24, rowY, 24, 20);
-            rowY += ROW_H;
-        }
-
         nameField = add(new UiTextField(nameDraft, 48).placeholder("e.g. Jump 1").onChange(t -> {
             nameDraft = t;
             errorText = "";
         }), fieldX, rowY, fieldW, 20);
         nameField.setFocused(true);
-        if (nameDraft.trim().isEmpty() && pagerShown) {
-            showPlaceholderName();
-        }
         rowY += ROW_H;
 
         serverDropdown = add(new UiDropdown(popup, "", this::serverLabel, this::serverEntries), fieldX, rowY, fieldW, 20);
@@ -153,8 +123,7 @@ public class GuiNewStrategy extends UiScreen {
 
         continueButton = new UiButton("Continue", UiButton.Style.PRIMARY, this::onNext);
         UiButton cancel = new UiButton("Cancel", UiButton.Style.SECONDARY, this::onBack);
-        moreButton = new UiButton("More", UiButton.Style.GHOST, this::openMoreMenu);
-        addFooter(moreButton, cancel, continueButton);
+        addFooter(cancel, continueButton);
     }
 
     @Override
@@ -166,14 +135,6 @@ public class GuiNewStrategy extends UiScreen {
         nameField.setInvalid(!nameDraft.trim().isEmpty() && !IdRules.isValidId(nameDraft));
 
         int rowY = contentY;
-        if (pagerShown) {
-            if (PlaceholderSyncService.getPlaceholderSectionCount() > 0) {
-                label("SHEET SECTION", rowY);
-            }
-            rowY += ROW_H;
-            label("SHEET JUMP", rowY);
-            rowY += ROW_H;
-        }
         label("JUMP NAME", rowY);
         rowY += ROW_H;
         label("SERVER", rowY);
@@ -287,53 +248,8 @@ public class GuiNewStrategy extends UiScreen {
     }
 
     // -------------------------
-    // Placeholder pager
-    // -------------------------
-
-    private String sectionPagerText() {
-        int count = PlaceholderSyncService.getPlaceholderSectionCount();
-        if (count <= 0) return "";
-
-        int idx = Math.max(0, Math.min(PlaceholderSyncService.getCurrentPlaceholderSectionIndex(), count - 1));
-        String name = PlaceholderSyncService.getCurrentPlaceholderSectionName();
-        if (name == null || name.trim().isEmpty()) name = "(unnamed)";
-        return (idx + 1) + "/" + count + "  " + name;
-    }
-
-    private String jumpPagerText() {
-        return (PlaceholderSyncService.getPlaceholderJumpIndex() + 1) + "/" + PlaceholderSyncService.getPlaceholderJumpCount();
-    }
-
-    private void stepSection(int delta) {
-        PlaceholderSyncService.jumpToPlaceholderSection(
-                PlaceholderSyncService.getCurrentPlaceholderSectionIndex() + delta);
-        showPlaceholderName();
-    }
-
-    /** Puts the pager's current jump name into the name field. */
-    private void showPlaceholderName() {
-        String name = PlaceholderSyncService.getCurrentPlaceholderJumpName();
-        if (name != null && name.trim().length() > 0) {
-            nameDraft = name.trim();
-            nameField.setText(nameDraft);
-        }
-    }
-
-    // -------------------------
     // Actions
     // -------------------------
-
-    private void openMoreMenu() {
-        boolean canConfigure = selectedServer != null
-                && (BuiltinContainers.isGlobalServer(selectedServer) || selectedMap != null);
-
-        List<Entry> entries = new ArrayList<Entry>();
-        entries.add(Entry.item("Create placeholder jump", isReady(), this::createPlaceholderJump));
-        entries.add(Entry.item("Placeholder sheet...", canConfigure,
-                () -> Minecraft.getMinecraft().displayGuiScreen(new GuiConfigurePlaceholder(this))));
-
-        popup.open(moreButton.x, moreButton.y - entries.size() * 18 - 12, 210, entries);
-    }
 
     private void onNext() {
         if (!continueButton.enabled) return;
@@ -392,39 +308,6 @@ public class GuiNewStrategy extends UiScreen {
 
     private boolean hasValidSection() {
         return selectedSection != null && selectedSectionLevel >= 1 && selectedSectionLevel <= ParkourMap.MAX_SECTION_LEVELS && isSectionPickAllowed();
-    }
-
-    /** Creates the jump with a PLACEHOLDER strategy (to be filled in later) and advances the sheet pager. */
-    private void createPlaceholderJump() {
-        String jumpId = nameDraft.trim();
-        if (!IdRules.isValidId(jumpId) || selectedServer == null || selectedMap == null) {
-            return;
-        }
-
-        Jump j = JumpService.getOrCreateJumpAtPlayer(selectedMap, jumpId);
-        if (j == null) {
-            errorText = "Failed to create placeholder jump.";
-            return;
-        }
-
-        // If a section is selected, move the (already created) jump to the end of that section.
-        if (hasValidSection()) {
-            SectionLayoutService.moveExistingJumpToEndOfSection(selectedMap, selectedSectionLevel, selectedSection, j);
-            StickySectionCache.remember(selectedServer, selectedMap, selectedSectionLevel, selectedSection);
-        }
-
-        ArrayList<String> lines = new ArrayList<String>(8);
-        for (int i = 0; i < 8; i++) {
-            lines.add("");
-        }
-        lines.set(2, PLACEHOLDER_TEXT);
-
-        j.getReminders().add(new Reminder(lines));
-
-        DataStoreRepository.save();
-        PlaceholderSyncService.advancePlaceholderAfterCreate();
-
-        onBack();
     }
 
     @Override

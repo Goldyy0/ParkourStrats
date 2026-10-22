@@ -18,6 +18,9 @@ public final class UiTheme {
     public static final int ACCENT = 0xFF6D3FD0;
     public static final int ACCENT_HOVER = 0xFF8250E8;
     public static final int ACCENT_PRESSED = 0xFF5A32B0;
+    /** Subdued accent for secondary actions that should not compete with the main button (e.g. "More"). */
+    public static final int ACCENT_MUTED = 0xFF3E2F6E;
+    public static final int ACCENT_MUTED_HOVER = 0xFF4C3A86;
 
     // Controls
     public static final int CONTROL_BG = 0xFF22202C;

@@ -2,195 +2,211 @@ package me.texyle.startreminders.sheets;
 
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
+import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * Downloads a Google Sheet on a background thread. The CSV export provides every row; the Apps Script endpoint
+ * adds the section cells (merged cells filled in) and their colors when it can be reached.
+ */
 public final class SheetSyncManager {
 
-    public interface ISyncCallback {
-        void onSuccess(String csvText, String cachePath);
+    public interface Callback {
+        /** Called on the download thread. */
+        void onSuccess(SheetData data);
+
+        /** Called on the download thread. */
         void onError(String errorMessage);
     }
 
-    private static boolean syncInProgress = false;
+    private static final String SCRIPT_ENDPOINT =
+            "https://script.google.com/macros/s/AKfycbyTqmi25lLkfqAqfmcNGDYK7IRwBU-40XWaAwIBNFfkX45LuH-cTjwi2OzMCAw5ElYk/exec";
 
     private static final int CONNECT_TIMEOUT_MS = 8000;
-    private static final int READ_TIMEOUT_MS = 12000;
+    private static final int READ_TIMEOUT_MS = 15000;
     private static final int MAX_REDIRECTS = 5;
+    private static final int MAX_BODY_BYTES = 8 * 1024 * 1024;
+
+    private static final AtomicBoolean running = new AtomicBoolean(false);
 
     private SheetSyncManager() {}
 
     public static boolean isSyncInProgress() {
-        return syncInProgress;
+        return running.get();
     }
 
-    public static void fetchCsvAsync(final String sheetUrl, final int forcedGid, final String cacheFilePath, final ISyncCallback cb) {
-        if (syncInProgress) {
-            if (cb != null) cb.onError("Sync already in progress.");
+    public static void fetchAsync(final String sheetUrl, final int forcedGid, final Callback cb) {
+        if (!running.compareAndSet(false, true)) {
+            cb.onError("Sync already in progress.");
             return;
         }
 
-        syncInProgress = true;
-
-        new Thread(() -> {
-            try {
-                String urlTrimmed = sheetUrl != null ? sheetUrl.trim() : "";
-                if (urlTrimmed.isEmpty()) {
-                    fail(cb, "Invalid Google Sheets URL.");
-                    return;
+        Thread thread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                SheetData data = null;
+                String error = null;
+                try {
+                    String url = sheetUrl != null ? sheetUrl.trim() : "";
+                    if (url.isEmpty()) {
+                        error = "No sheet URL.";
+                    } else {
+                        Outcome outcome = download(url, forcedGid);
+                        data = outcome.data;
+                        error = outcome.error;
+                    }
+                } catch (Throwable t) {
+                    error = "Failed to download the sheet.";
                 }
 
-                String csvUrl = SheetUrlUtils.normalizeToCsvUrl(urlTrimmed, forcedGid);
-                if (csvUrl == null || csvUrl.trim().isEmpty()) {
-                    fail(cb, "Invalid Google Sheets URL (unable to derive CSV export URL).");
-                    return;
+                // Free the slot before reporting, so the callback may start the next sync.
+                running.set(false);
+
+                if (data != null) {
+                    cb.onSuccess(data);
+                } else {
+                    cb.onError(error != null ? error : "Failed to download the sheet.");
                 }
-
-                HttpResult res = httpGetFollowRedirects(csvUrl);
-
-                if (res == null || res.body == null || res.body.trim().isEmpty()) {
-                    fail(cb, "Empty response. The sheet might be private/unpublished, or the URL is invalid.");
-                    return;
-                }
-
-                String bodyTrim = res.body.trim();
-                String ct = res.contentType != null ? res.contentType : "";
-
-                boolean looksHtml = ct.toLowerCase().contains("text/html")
-                        || bodyTrim.startsWith("<!DOCTYPE html")
-                        || bodyTrim.startsWith("<html")
-                        || bodyTrim.startsWith("<HTML")
-                        || bodyTrim.startsWith("<!doctype html");
-
-                if (looksHtml) {
-                    String msg =
-                            "Sheet download returned HTML (not CSV).\n"
-                                    + "Final URL: " + (res.finalUrl != null ? res.finalUrl : "<unknown>") + "\n"
-                                    + "Content-Type: " + (res.contentType != null ? res.contentType : "<unknown>") + "\n"
-                                    + "Tip: Use a published CSV link that contains 'output=csv' (Publish to web → CSV), "
-                                    + "or paste a normal /edit link and let the mod convert it automatically.";
-                    fail(cb, msg);
-                    return;
-                }
-
-                if (cacheFilePath != null && !cacheFilePath.trim().isEmpty()) {
-                    writeToFile(cacheFilePath, res.body);
-                }
-
-                if (cb != null) cb.onSuccess(res.body, cacheFilePath);
-
-            } catch (Exception ex) {
-                fail(cb, "Failed to download CSV.");
-            } finally {
-                syncInProgress = false;
             }
-        }, "StratReminders-SheetSync").start();
+        }, "StratReminders-SheetSync");
+        thread.setDaemon(true);
+        thread.start();
     }
 
-    private static void fail(ISyncCallback cb, String msg) {
-        if (cb != null) cb.onError(msg);
+    private static final class Outcome {
+        final SheetData data;
+        final String error;
+
+        Outcome(SheetData data, String error) {
+            this.data = data;
+            this.error = error;
+        }
+    }
+
+    private static Outcome download(String url, int forcedGid) {
+        // 1) The sheet itself, as CSV: every row, nothing else.
+        String csvUrl = SheetUrlUtils.normalizeToCsvUrl(url, forcedGid);
+        if (csvUrl == null || csvUrl.trim().isEmpty()) {
+            return new Outcome(null, "Invalid Google Sheets URL.");
+        }
+
+        SheetData data;
+        try {
+            HttpResult res = get(csvUrl);
+            if (res.code != 200) {
+                String hint = (res.code == 401 || res.code == 403 || res.code == 404)
+                        ? " The sheet is probably private; share it with 'anyone with the link'." : "";
+                return new Outcome(null, "Download failed (HTTP " + res.code + ")." + hint);
+            }
+
+            String body = res.body.trim();
+            String type = res.contentType != null ? res.contentType.toLowerCase() : "";
+            if (body.isEmpty()) {
+                return new Outcome(null, "The sheet is empty or not shared.");
+            }
+            if (type.contains("text/html") || body.toLowerCase().startsWith("<!doctype html") || body.toLowerCase().startsWith("<html")) {
+                return new Outcome(null, "The sheet download returned a web page, not data. Share the sheet with "
+                        + "'anyone with the link' or publish it as CSV.");
+            }
+
+            data = SheetData.fromCsv(res.body);
+            if (data.error != null) {
+                return new Outcome(null, data.error);
+            }
+        } catch (IOException ex) {
+            return new Outcome(null, "Failed to download the sheet (" + ex.getClass().getSimpleName() + ").");
+        }
+
+        // 2) The sheet script, for the section columns: merged cells expanded, and their colors.
+        if (data.cols.jump > 0) {
+            data.warning = addSectionsFromScript(data, url);
+        }
+        return new Outcome(data, null);
+    }
+
+    /** @return why the script could not be used (the sheet is still imported, without section colors), or null */
+    private static String addSectionsFromScript(SheetData data, String url) {
+        try {
+            HttpResult res = get(SCRIPT_ENDPOINT + "?sheetUrl=" + URLEncoder.encode(url, "UTF-8"));
+            if (res.code != 200 || !res.body.trim().startsWith("{")) {
+                return "The sheet script answered with HTTP " + res.code + "; section colors were not used.";
+            }
+
+            SheetData.ScriptRows rows = SheetData.parseScript(res.body);
+            if (rows == null) {
+                return "The sheet script returned no usable rows; section colors were not used.";
+            }
+            return data.mergeSections(rows);
+        } catch (IOException ex) {
+            return "The sheet script could not be reached; section colors were not used.";
+        }
     }
 
     private static final class HttpResult {
         final int code;
-        final String finalUrl;
         final String contentType;
-        final String location;
         final String body;
 
-        HttpResult(int code, String finalUrl, String contentType, String location, String body) {
+        HttpResult(int code, String contentType, String body) {
             this.code = code;
-            this.finalUrl = finalUrl;
             this.contentType = contentType;
-            this.location = location;
             this.body = body;
         }
     }
 
-    private static HttpResult httpGetFollowRedirects(String url) throws Exception {
+    private static HttpResult get(String url) throws IOException {
         String current = url;
 
         for (int i = 0; i <= MAX_REDIRECTS; i++) {
-            HttpURLConnection conn = null;
-            InputStream is = null;
-
+            HttpURLConnection conn = (HttpURLConnection) new URL(current).openConnection();
             try {
-                conn = (HttpURLConnection) new URL(current).openConnection();
                 conn.setRequestMethod("GET");
                 conn.setInstanceFollowRedirects(false);
                 conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
                 conn.setReadTimeout(READ_TIMEOUT_MS);
-
+                conn.setUseCaches(false);
                 conn.setRequestProperty("User-Agent", "StratReminders/1.0");
-                conn.setRequestProperty("Accept", "text/csv,*/*");
                 conn.setRequestProperty("Accept-Encoding", "identity");
 
                 int code = conn.getResponseCode();
-                String contentType = conn.getHeaderField("Content-Type");
-                String location = conn.getHeaderField("Location");
-
-                if (isRedirect(code)) {
-                    String loc = location;
-                    if (loc == null || loc.trim().isEmpty()) {
-                        return new HttpResult(code, current, contentType, null, "");
+                if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+                    String location = conn.getHeaderField("Location");
+                    if (location == null || location.trim().isEmpty()) {
+                        return new HttpResult(code, null, "");
                     }
-                    URL base = new URL(current);
-                    URL next = new URL(base, loc);
-                    current = next.toString();
+                    current = new URL(new URL(current), location).toString();
                     continue;
                 }
 
-                InputStream raw;
-                if (code != 200) {
-                    raw = conn.getErrorStream();
-                    if (raw == null) {
-                        return new HttpResult(code, current, contentType, location, "");
-                    }
-                } else {
-                    raw = conn.getInputStream();
-                }
-
-                is = new BufferedInputStream(raw);
-                String body = readAllUtf8(is);
-
-                return new HttpResult(code, current, contentType, location, body);
-
+                InputStream raw = code == 200 ? conn.getInputStream() : conn.getErrorStream();
+                String body = raw != null ? readUtf8(new BufferedInputStream(raw)) : "";
+                return new HttpResult(code, conn.getHeaderField("Content-Type"), body);
             } finally {
-                try { if (is != null) is.close(); } catch (Exception ignored) {}
-                try { if (conn != null) conn.disconnect(); } catch (Exception ignored) {}
+                conn.disconnect();
             }
         }
 
-        return null;
+        throw new IOException("Too many redirects");
     }
 
-    private static boolean isRedirect(int code) {
-        return code == 301 || code == 302 || code == 303 || code == 307 || code == 308;
-    }
-
-    private static String readAllUtf8(InputStream is) throws Exception {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        byte[] buf = new byte[4096];
-        int n;
-        while ((n = is.read(buf)) > 0) {
-            out.write(buf, 0, n);
-        }
-        return new String(out.toByteArray(), "UTF-8");
-    }
-
-    private static void writeToFile(String path, String content) {
+    private static String readUtf8(InputStream in) throws IOException {
         try {
-            File f = new File(path);
-            File parent = f.getParentFile();
-            if (parent != null && !parent.exists()) parent.mkdirs();
-
-            FileOutputStream out = new FileOutputStream(f);
-            out.write(content.getBytes("UTF-8"));
-            out.flush();
-            out.close();
-        } catch (Exception ignored) {}
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                out.write(buf, 0, n);
+                if (out.size() > MAX_BODY_BYTES) {
+                    throw new IOException("Response too large");
+                }
+            }
+            return new String(out.toByteArray(), "UTF-8");
+        } finally {
+            in.close();
+        }
     }
 }

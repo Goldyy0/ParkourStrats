@@ -43,6 +43,17 @@ public class Jump {
         this.sheetRowKey = (sheetRowKey != null) ? sheetRowKey : "";
     }
 
+    /** True when the last sheet sync no longer found this jump's rows in the sheet. */
+    private boolean sheetMissing;
+
+    public boolean isSheetMissing() {
+        return sheetMissing;
+    }
+
+    public void setSheetMissing(boolean sheetMissing) {
+        this.sheetMissing = sheetMissing;
+    }
+
     public boolean hasSheetRowKey() {
         return sheetRowKey != null && sheetRowKey.trim().length() > 0;
     }

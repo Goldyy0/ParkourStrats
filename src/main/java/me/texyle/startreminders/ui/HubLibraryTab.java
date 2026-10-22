@@ -14,7 +14,8 @@ import me.texyle.startreminders.persistence.BuiltinContainers;
 import me.texyle.startreminders.reminders.SelectionState;
 import me.texyle.startreminders.services.MapService;
 import me.texyle.startreminders.services.ServerService;
-import me.texyle.startreminders.sheets.SheetTemplateSync;
+import me.texyle.startreminders.sheets.SheetImportService;
+import me.texyle.startreminders.template.TemplateMode;
 import me.texyle.startreminders.ui.UiPopup.Entry;
 
 /**
@@ -169,7 +170,7 @@ final class HubLibraryTab implements HubTab {
         ParkourMap map = currentMap();
 
         newMapButton.enabled = server != null && !protectedServer;
-        mapMenuButton.enabled = map != null && !protectedServer;
+        mapMenuButton.enabled = server != null && !protectedServer;
         serverMenuButton.enabled = server != null && !protectedServer;
 
         UiDraw.text("SERVERS", x, y + 7, UiTheme.TEXT_MUTED);
@@ -328,30 +329,62 @@ final class HubLibraryTab implements HubTab {
     private void openMapMenu() {
         final ServerProfile server = currentServer();
         final ParkourMap map = currentMap();
-        if (server == null || map == null) return;
+        if (server == null) return;
 
         boolean editable = !BuiltinContainers.isProtectedServer(server);
         List<Entry> entries = new ArrayList<Entry>();
-        entries.add(Entry.item("Open jumps", () -> openMap(map)));
-        entries.add(Entry.item("Edit map...", editable, () -> hub.open(new GuiEditMap(hub, server, map))));
-        entries.add(Entry.afterSeparator("Link sheet...", editable, () -> linkSheet(server, map)));
-        entries.add(Entry.item("Sync now", editable && map.hasSheetConfigured(),
-                () -> SheetTemplateSync.requestSheetSyncForMap(server, map, true)));
-        entries.add(Entry.afterSeparator("Export template...", editable, () -> MapTemplateActions.exportMap(server, map)));
-        entries.add(Entry.item("Import template...", editable, () -> MapTemplateActions.importInto(server, null)));
-        entries.add(Entry.danger("Remove map...", editable, () -> removeMap(server, map)));
+        entries.add(Entry.item("Import sheet as new map...", editable, () -> importSheet(server)));
+        if (map != null) {
+            entries.add(new Entry("Template mode", editable, map.isTemplateMode(), true,
+                    () -> TemplateMode.setEnabled(map, !map.isTemplateMode())));
+            entries.add(Entry.item("Edit map...", editable, () -> hub.open(new GuiEditMap(hub, server, map))));
+            entries.add(Entry.afterSeparator("Link sheet...", editable, () -> linkSheet(server, map)));
+            entries.add(Entry.item("Sync now", editable && map.hasSheetConfigured(),
+                    () -> SheetImportService.sync(server, map)));
+            entries.add(Entry.item("Edit import filter...", editable && map.hasSheetConfigured(),
+                    () -> SheetImportActions.editFilter(map)));
+            entries.add(Entry.afterSeparator("Export template...", editable, () -> MapTemplateActions.exportMap(server, map)));
+            entries.add(Entry.item("Import template...", editable, () -> MapTemplateActions.importInto(server, null)));
+            entries.add(Entry.danger("Remove map...", editable, () -> removeMap(server, map)));
+        }
 
-        popup.open(mapMenuButton.x + mapMenuButton.w - 200, mapMenuButton.y + mapMenuButton.h + 2, 200, entries);
+        popup.open(mapMenuButton.x + mapMenuButton.w - 220, mapMenuButton.y + mapMenuButton.h + 2, 220, entries);
+    }
+
+    /** Asks for the sheet link and a name, then builds a new map from the sheet. */
+    private void importSheet(final ServerProfile server) {
+        hub.open(new GuiTextPrompt(hub, "Sheet URL", "",
+                new GuiTextPrompt.IResultHandler() {
+                    @Override
+                    public void onConfirm(final String url) {
+                        if (url == null || url.trim().isEmpty()) return;
+                        hub.open(new GuiTextPrompt(hub, "Name of the new map", "", new GuiTextPrompt.IResultHandler() {
+                            @Override
+                            public void onConfirm(String name) {
+                                SheetImportActions.importAsNewMap(server, name, url);
+                            }
+
+                            @Override
+                            public void onCancel() { }
+                        }));
+                    }
+
+                    @Override
+                    public void onCancel() { }
+                }));
     }
 
     private void linkSheet(final ServerProfile server, final ParkourMap map) {
         String current = map.getSheetUrl();
-        hub.open(new GuiTextPrompt(hub, "Sheet URL (public) for map: " + map.getId(), current != null ? current : "",
+        hub.open(new GuiTextPrompt(hub, "Sheet URL for map: " + map.getId(), current != null ? current : "",
                 new GuiTextPrompt.IResultHandler() {
                     @Override
                     public void onConfirm(String text) {
-                        SheetTemplateSync.setSheetUrlForMap(map, text);
-                        SheetTemplateSync.requestSheetSyncForMap(server, map, true);
+                        if (text == null || text.trim().isEmpty()) {
+                            SheetImportService.stopSync(map);
+                        } else {
+                            SheetImportActions.linkSheet(map, text.trim());
+                        }
                     }
 
                     @Override

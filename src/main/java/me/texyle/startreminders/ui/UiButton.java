@@ -3,7 +3,7 @@ package me.texyle.startreminders.ui;
 /** Flat button. PRIMARY is the one main action of a view; keep one per view. */
 public class UiButton extends UiWidget {
 
-    public enum Style { PRIMARY, SECONDARY, GHOST, DANGER }
+    public enum Style { PRIMARY, MUTED_ACCENT, SECONDARY, GHOST, DANGER }
 
     private String label;
     private final Style style;
@@ -37,6 +37,10 @@ public class UiButton extends UiWidget {
         switch (style) {
             case PRIMARY:
                 fill = hover ? UiTheme.ACCENT_HOVER : UiTheme.ACCENT;
+                border = fill;
+                break;
+            case MUTED_ACCENT:
+                fill = hover ? UiTheme.ACCENT_MUTED_HOVER : UiTheme.ACCENT_MUTED;
                 border = fill;
                 break;
             case DANGER:

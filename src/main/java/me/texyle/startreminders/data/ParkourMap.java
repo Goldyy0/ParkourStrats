@@ -6,15 +6,16 @@ public class ParkourMap {
     private String id;
     private ArrayList<Jump> jumps = new ArrayList<Jump>();
 
+    // Template mode: the create key places the jumps of this map one by one instead of opening a dialog.
+    private boolean templateMode = false;
+
+    // Which part of the linked sheet is imported; null = all of it.
+    private SheetFilter sheetFilter;
+
     // Sheet sync metadata (Phase 3)
     private String sheetUrl = "";
     private int sheetGid = -1; // -1 means "not specified"
     private long lastSheetSyncMs = 0L;
-
-    // Placeholder helper sync (CreateJumpContext helper)
-    private String placeholderSheetUrl = "";
-    private boolean placeholderSyncEnabled = false;
-    private int placeholderJumpIndex = 0;
 
     // -------------------------
     // Sections config (v1.6)
@@ -60,6 +61,22 @@ public class ParkourMap {
         this.jumps = jumps;
     }
 
+    public SheetFilter getSheetFilter() {
+        return sheetFilter;
+    }
+
+    public void setSheetFilter(SheetFilter sheetFilter) {
+        this.sheetFilter = sheetFilter;
+    }
+
+    public boolean isTemplateMode() {
+        return templateMode;
+    }
+
+    public void setTemplateMode(boolean templateMode) {
+        this.templateMode = templateMode;
+    }
+
     public String getSheetUrl() {
         return sheetUrl != null ? sheetUrl : "";
     }
@@ -86,34 +103,6 @@ public class ParkourMap {
 
     public boolean hasSheetConfigured() {
         return getSheetUrl().trim().length() > 0;
-    }
-
-    // -------------------------
-    // Placeholder sync helpers
-    // -------------------------
-
-    public String getPlaceholderSheetUrl() {
-        return placeholderSheetUrl != null ? placeholderSheetUrl : "";
-    }
-
-    public void setPlaceholderSheetUrl(String url) {
-        this.placeholderSheetUrl = url != null ? url : "";
-    }
-
-    public boolean isPlaceholderSyncEnabled() {
-        return placeholderSyncEnabled;
-    }
-
-    public void setPlaceholderSyncEnabled(boolean enabled) {
-        this.placeholderSyncEnabled = enabled;
-    }
-
-    public int getPlaceholderJumpIndex() {
-        return placeholderJumpIndex;
-    }
-
-    public void setPlaceholderJumpIndex(int idx) {
-        this.placeholderJumpIndex = Math.max(0, idx);
     }
 
     // -------------------------

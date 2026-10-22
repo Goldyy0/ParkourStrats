@@ -1,5 +1,6 @@
 package me.texyle.startreminders.input;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.command.CommandBase;
 import net.minecraft.command.ICommandSender;
 
@@ -31,7 +32,7 @@ public class TapRecordCommand extends CommandBase {
     @Override
     public void processCommand(ICommandSender sender, String[] args) {
         if (!TapRecorder.isRecording()) {
-            ChatUtils.warning("Not recording taps.");
+            ChatUtils.sendAlways(Minecraft.getMinecraft(), ChatUtils.WARNING_PREFIX + "Not recording taps.");
             return;
         }
 

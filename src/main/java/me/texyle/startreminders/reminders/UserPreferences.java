@@ -30,6 +30,16 @@ public final class UserPreferences {
 		SettingsRepository.save();
 	}
 
+	/** False: the mod prints no status messages in chat (the tap recorder's prompt is exempt). */
+	public static boolean isChatMessagesEnabled() {
+		return SettingsRepository.get().chatMessages;
+	}
+
+	public static void setChatMessagesEnabled(boolean enabled) {
+		SettingsRepository.get().chatMessages = enabled;
+		SettingsRepository.save();
+	}
+
 	/** True: the show key toggles the in-world strategies; false: they show while it is held. */
 	public static boolean isShowKeyToggle() {
 		return SettingsRepository.get().showKeyToggle;

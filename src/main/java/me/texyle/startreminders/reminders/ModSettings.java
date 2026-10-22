@@ -24,6 +24,9 @@ public class ModSettings {
     // Show-strategies key: true = press to toggle, false = hold. Default is true.
     public boolean showKeyToggle = true;
 
+    // Status messages the mod prints in chat (Record taps always shows its prompt). Default is true.
+    public boolean chatMessages = true;
+
     // Where a new strategy label is placed: blocks in front of the player (0..5, default 1) and blocks above
     // the feet block (0..5, default 2).
     public int labelForward = 1;

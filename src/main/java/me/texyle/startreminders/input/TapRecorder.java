@@ -6,6 +6,7 @@ import java.util.function.Consumer;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
+import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.settings.KeyBinding;
 import net.minecraft.event.ClickEvent;
@@ -19,6 +20,7 @@ import net.minecraftforge.client.event.RenderGameOverlayEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
 
+import me.texyle.startreminders.template.TemplateMode;
 import me.texyle.startreminders.utils.ChatUtils;
 
 /**
@@ -112,7 +114,7 @@ public class TapRecorder {
             public void run() {
                 if (keep && handler != null) {
                     if (text.isEmpty()) {
-                        ChatUtils.warning("No taps were recorded; SETUP was left unchanged.");
+                        ChatUtils.sendAlways(Minecraft.getMinecraft(), ChatUtils.WARNING_PREFIX + "No taps were recorded; SETUP was left unchanged.");
                     } else {
                         handler.accept(text);
                     }
@@ -126,10 +128,11 @@ public class TapRecorder {
         if (mc.thePlayer == null) return;
 
         ChatComponentText message = new ChatComponentText(ChatUtils.INFO_PREFIX
-                + "Recording taps. Tap W A S D now, then open the chat and click ");
+                + "Recording taps... ");
         message.appendSibling(button("[Finish]", EnumChatFormatting.GREEN, "/" + COMMAND + " finish", "Stop and fill SETUP"));
         message.appendText(" ");
         message.appendSibling(button("[Cancel]", EnumChatFormatting.RED, "/" + COMMAND + " cancel", "Stop without changing SETUP"));
+        message.appendText(EnumChatFormatting.GRAY + " or type /" + COMMAND + " finish");
         mc.thePlayer.addChatMessage(message);
     }
 
@@ -238,13 +241,18 @@ public class TapRecorder {
     // HUD
     // -------------------------
 
+    /** The taps so far, under the crosshair (below the template mode lines when those are shown). */
     @SubscribeEvent
-    public void onOverlayText(RenderGameOverlayEvent.Text event) {
-        if (!recording) return;
+    public void onOverlay(RenderGameOverlayEvent.Post event) {
+        if (!recording || event.type != RenderGameOverlayEvent.ElementType.CROSSHAIRS) return;
 
-        String soFar = compressed();
-        event.left.add(EnumChatFormatting.RED + "Recording taps" + EnumChatFormatting.WHITE
-                + (soFar.isEmpty() ? "" : ": " + soFar));
-        event.left.add(EnumChatFormatting.GRAY + "Open the chat and click [Finish] (or type /" + COMMAND + " finish)");
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.currentScreen != null) return;
+
+        FontRenderer font = mc.fontRendererObj;
+        String text = EnumChatFormatting.RED + "Taps:" + EnumChatFormatting.WHITE + (compressed().isEmpty() ? "" : " " + compressed());
+        int x = event.resolution.getScaledWidth() / 2 - font.getStringWidth(text) / 2;
+        int y = event.resolution.getScaledHeight() / 2 + 12 + (TemplateMode.isActive() ? 2 * (font.FONT_HEIGHT + 2) : 0);
+        font.drawStringWithShadow(text, x, y, 0xFFFFFFFF);
     }
 }

@@ -1,14 +1,14 @@
 package me.texyle.startreminders.gui;
 
+import java.awt.FileDialog;
+import java.awt.Frame;
 import java.io.File;
 
-import javax.swing.JFileChooser;
-import javax.swing.SwingUtilities;
 
 import net.minecraft.client.Minecraft;
 
 /**
- * Native file pickers. The Swing dialog runs on a helper thread (it would block the game otherwise);
+ * Native file pickers. The dialog runs on a helper thread (it would block the game otherwise);
  * the chosen file is handed back on the Minecraft client thread.
  */
 public final class FileDialogs {
@@ -35,29 +35,23 @@ public final class FileDialogs {
             @Override
             public void run() {
                 try {
-                    final File[] chosen = new File[1];
+                    // java.awt.FileDialog is the operating system's own dialog (on Windows the familiar Explorer one).
+                    FileDialog dialog = new FileDialog((Frame) null, title, save ? FileDialog.SAVE : FileDialog.LOAD);
+                    // On Windows a pattern in the file name field filters the list.
+                    dialog.setFile(suggestedName != null ? suggestedName : "*.json");
+                    dialog.setAlwaysOnTop(true);
+                    dialog.setVisible(true);
 
-                    SwingUtilities.invokeAndWait(new Runnable() {
-                        @Override
-                        public void run() {
-                            JFileChooser chooser = new JFileChooser();
-                            chooser.setDialogTitle(title);
-                            if (suggestedName != null) {
-                                chooser.setSelectedFile(new File(suggestedName));
-                            }
-                            int result = save ? chooser.showSaveDialog(null) : chooser.showOpenDialog(null);
-                            if (result == JFileChooser.APPROVE_OPTION) {
-                                chosen[0] = chooser.getSelectedFile();
-                            }
-                        }
-                    });
+                    String name = dialog.getFile();
+                    String directory = dialog.getDirectory();
+                    dialog.dispose();
+                    if (name == null || directory == null) return;
 
-                    if (chosen[0] == null) return;
-
+                    final File chosen = new File(directory, name);
                     Minecraft.getMinecraft().addScheduledTask(new Runnable() {
                         @Override
                         public void run() {
-                            handler.onFile(chosen[0]);
+                            handler.onFile(chosen);
                         }
                     });
 
@@ -65,6 +59,6 @@ public final class FileDialogs {
                     ex.printStackTrace();
                 }
             }
-        }).start();
+        }, "StratReminders-FileDialog").start();
     }
 }

@@ -1,20 +1,25 @@
 package me.texyle.startreminders.ui;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
+import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
+import net.minecraft.client.settings.KeyBinding;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.resources.DefaultPlayerSkin;
 import net.minecraft.util.ResourceLocation;
 
+import me.texyle.startreminders.StratReminders;
 import me.texyle.startreminders.gui.GuiDraw;
 import me.texyle.startreminders.gui.GuiScissor;
 import me.texyle.startreminders.reminders.UserPreferences;
+import me.texyle.startreminders.utils.DrawUtils;
 
 /** All user options in one place: how strategies look in the world and how the edit key behaves. */
 final class HubSettingsTab implements HubTab {
@@ -22,7 +27,7 @@ final class HubSettingsTab implements HubTab {
     private static final char SECTION_SIGN = (char) 0xA7;
 
     private static final int DISPLAY_CARD_H = 168;
-    private static final int BEHAVIOR_CARD_H = 132;
+    private static final int BEHAVIOR_CARD_H = 166;
     private static final int CARD_GAP = 8;
     private static final int COLUMN_GAP = 12;
     private static final int PREVIEW_H = 130;
@@ -56,6 +61,7 @@ final class HubSettingsTab implements HubTab {
     private final UiSegmented pickMode;
     private final UiSegmented sectionsMode;
     private final UiSegmented showKeyMode;
+    private final UiToggle chatMessages;
     private int labelTop;
     private int chartX;
     private int chartY;
@@ -87,6 +93,10 @@ final class HubSettingsTab implements HubTab {
         showKeyMode = new UiSegmented(new String[] { "Toggle", "Hold" },
                 UserPreferences.isShowKeyToggle() ? 0 : 1,
                 index -> UserPreferences.setShowKeyToggle(index == 0));
+
+        chatMessages = new UiToggle(UserPreferences.isChatMessagesEnabled(),
+                on -> UserPreferences.setChatMessagesEnabled(on.booleanValue()));
+        widgets.add(chatMessages);
 
         widgets.add(pickMode);
         widgets.add(sectionsMode);
@@ -159,6 +169,8 @@ final class HubSettingsTab implements HubTab {
         sectionsMode.y = behaviorTop + 24 + 34 + 8;
         showKeyMode.x = right - showKeyMode.w;
         showKeyMode.y = behaviorTop + 24 + 68 + 8;
+        chatMessages.x = right - chatMessages.w;
+        chatMessages.y = behaviorTop + 24 + 102 + 9;
     }
 
     @Override
@@ -190,9 +202,10 @@ final class HubSettingsTab implements HubTab {
 
         int behaviorTop = top + DISPLAY_CARD_H + CARD_GAP;
         UiDraw.card(x, behaviorTop, leftW, BEHAVIOR_CARD_H, "Behavior");
-        row(labelX, behaviorTop + 24, "Edit key target", "Jump the edit key (B) opens");
+        row(labelX, behaviorTop + 24 + 102, "Chat messages", "Status messages from the mod (not Record taps)");
+        row(labelX, behaviorTop + 24, "Edit key target", "Jump the edit key (" + keyName(StratReminders.editKey) + ") opens");
         row(labelX, behaviorTop + 24 + 34, "Sections in table", "Compact: color stripe, name on hover");
-        row(labelX, behaviorTop + 24 + 68, "Show strategies (X)",
+        row(labelX, behaviorTop + 24 + 68, "Show strategies (" + keyName(StratReminders.showKey) + ")",
                 UserPreferences.isShowKeyToggle() ? "Press to switch on and off" : "Shown while the key is held");
 
         for (UiWidget widget : widgets) {
@@ -268,6 +281,14 @@ final class HubSettingsTab implements HubTab {
         if (up != UserPreferences.getLabelUp()) UserPreferences.setLabelUp(up);
     }
 
+    /** The key the player has bound to the action right now, e.g. "X". */
+    private static String keyName(KeyBinding binding) {
+        int code = binding.getKeyCode();
+        if (code == 0) return "unbound";
+        // Mouse buttons are stored as negative codes.
+        return code < 0 ? Mouse.getButtonName(code + 100) : Keyboard.getKeyName(code);
+    }
+
     private void row(int labelX, int rowTop, String label, String description) {
         UiDraw.text(label, labelX, rowTop + 4, UiTheme.TEXT);
         UiDraw.text(description, labelX, rowTop + 16, UiTheme.TEXT_MUTED);
@@ -296,10 +317,12 @@ final class HubSettingsTab implements HubTab {
         if (UserPreferences.isGlobalShowJumpNameEnabled()) {
             lines.add(nameColor + "Example jump");
         }
-        lines.add(bodyColor + "Position: 12.5 / 64 / -3.5");
-        lines.add(bodyColor + "Setup: sprint from the edge");
-        lines.add(bodyColor + "Strategy: jump, 45 degree turn");
-        lines.add(bodyColor + "Tips: release W in the air");
+
+        // Position, facing, setup, strategy, strafe, turn, author, tips: laid out by the same code as in the world.
+        List<String> sample = Arrays.asList("back z.250", "", "1uW 2sW 1ssS", "-4t pfmm, run 1t on head", "1t", "late", "", "");
+        for (String line : DrawUtils.buildDisplayLines(sample)) {
+            lines.add(bodyColor + line);
+        }
 
         int lineH = UiDraw.font().FONT_HEIGHT + 3;
         int cy = areaY + (areaH - lines.size() * lineH) / 2;

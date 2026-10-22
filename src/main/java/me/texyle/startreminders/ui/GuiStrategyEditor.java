@@ -23,6 +23,7 @@ import me.texyle.startreminders.reminders.SelectionState;
 import me.texyle.startreminders.reminders.UserPreferences;
 import me.texyle.startreminders.services.JumpService;
 import me.texyle.startreminders.services.StrategyService;
+import me.texyle.startreminders.template.TemplateMode;
 import me.texyle.startreminders.ui.UiPopup.Entry;
 import me.texyle.startreminders.utils.ChatUtils;
 import me.texyle.startreminders.utils.PlayerBlockPos;
@@ -40,6 +41,7 @@ public class GuiStrategyEditor extends UiScreen {
 
     private static final int LABEL_W = 72;
     private static final int PREVIEW_W = 210;
+    private static final int NAV_ARROWS_W = 64;
 
     /** Where "Save" returns to; null closes all screens. */
     private final GuiScreen after;
@@ -105,6 +107,26 @@ public class GuiStrategyEditor extends UiScreen {
         return new GuiStrategyEditor(back, after, true);
     }
 
+    /**
+     * Template mode: the editor for the map's current jump, opened from the edit key.
+     *
+     * @return the screen to show, or null if the map has no jumps
+     */
+    public static GuiScreen forTemplate() {
+        return openForTemplate(null, null);
+    }
+
+    private static GuiScreen openForTemplate(GuiScreen back, GuiScreen after) {
+        Jump jump = TemplateMode.current();
+        if (jump == null) {
+            ChatUtils.warning("Template mode: this map has no jumps.");
+            return null;
+        }
+
+        TemplateMode.setCurrent(jump);
+        return new GuiStrategyEditor(back, after, !StrategyService.getReminderList().isEmpty());
+    }
+
     private static boolean pickJumpForKeybind() {
         if (!UserPreferences.isEditPickModeInCrosshair()) {
             JumpPicker.selectNearestJumpToPlayer();
@@ -124,6 +146,10 @@ public class GuiStrategyEditor extends UiScreen {
         super(back);
         this.after = after;
         this.editMode = editMode;
+
+        if (TemplateMode.isEditing() && SelectionState.getSelectedJump() != null) {
+            TemplateMode.setCurrent(SelectionState.getSelectedJump());
+        }
 
         if (editMode) {
             reminders = new ArrayList<Reminder>(StrategyService.getReminderList());
@@ -176,6 +202,12 @@ public class GuiStrategyEditor extends UiScreen {
         int rowY = y;
 
         // Jump name (read-only) is drawn in drawContent at this row.
+        if (TemplateMode.isEditing()) {
+            add(new UiDropdown(popup, "", TemplateMode::navTargetName, this::navLevelEntries),
+                    fieldX, rowY, fieldW - NAV_ARROWS_W - 4, fieldH);
+            add(new UiButton("<", UiButton.Style.SECONDARY, () -> navigate(-1)), fieldX + fieldW - NAV_ARROWS_W, rowY, 30, fieldH);
+            add(new UiButton(">", UiButton.Style.SECONDARY, () -> navigate(1)), fieldX + fieldW - 30, rowY, 30, fieldH);
+        }
         rowY += rowH;
 
         if (hasStrategyRow()) {
@@ -225,7 +257,7 @@ public class GuiStrategyEditor extends UiScreen {
         saveButton = new UiButton("Save", UiButton.Style.PRIMARY, this::save);
         UiButton cancel = new UiButton("Cancel", UiButton.Style.SECONDARY, this::onBack);
         if (editMode) {
-            moreButton = new UiButton("More", UiButton.Style.GHOST, this::openMoreMenu);
+            moreButton = new UiButton("More", UiButton.Style.MUTED_ACCENT, this::openMoreMenu);
             addFooter(moreButton, cancel, saveButton);
         } else {
             addFooter(cancel, saveButton);
@@ -245,6 +277,17 @@ public class GuiStrategyEditor extends UiScreen {
         draftCoords = new String[] { coordX.getText(), coordY.getText(), coordZ.getText() };
     }
 
+    /**
+     * The jump has no position yet (typically one that came from a sheet and waits to be placed) and the fields
+     * still say so: they are replaced by a red TEMPLATE until a position is set.
+     */
+    private boolean showsTemplateMarker() {
+        Jump jump = SelectionState.getSelectedJump();
+        return jump != null && jump.getX() == 0 && jump.getY() == 0 && jump.getZ() == 0
+                && "0".equals(coordX.getText().trim()) && "0".equals(coordY.getText().trim())
+                && "0".equals(coordZ.getText().trim());
+    }
+
     private void applyInitialCoordinates() {
         int sx = 0;
         int sy = 0;
@@ -257,8 +300,9 @@ public class GuiStrategyEditor extends UiScreen {
             sz = jump.getZ();
         }
 
+        // Without a jump to take the position from, start at the player's.
         EntityPlayerSP player = Minecraft.getMinecraft().thePlayer;
-        if (sx == 0 && sy == 0 && sz == 0 && player != null) {
+        if (jump == null && player != null) {
             sx = PlayerBlockPos.x(player);
             sy = PlayerBlockPos.jumpY(player);
             sz = PlayerBlockPos.z(player);
@@ -543,6 +587,10 @@ public class GuiStrategyEditor extends UiScreen {
     @Override
     protected void drawContent(int mouseX, int mouseY, float partialTicks) {
         saveButton.enabled = canSave();
+        boolean templateMarker = showsTemplateMarker();
+        coordX.visible = !templateMarker;
+        coordY.visible = !templateMarker;
+        coordZ.visible = !templateMarker;
         coordX.setInvalid(!parsable(coordX));
         coordY.setInvalid(!parsable(coordY));
         coordZ.setInvalid(!parsable(coordZ));
@@ -563,8 +611,10 @@ public class GuiStrategyEditor extends UiScreen {
         Jump jump = SelectionState.getSelectedJump();
         UiDraw.text("JUMP", contentX, rowY + textOffset, UiTheme.TEXT_MUTED);
         String name = (jump != null && jump.getId() != null) ? jump.getId() : "<none>";
-        UiDraw.text(UiDraw.fit(name, contentW - LABEL_W - (previewW > 0 ? PREVIEW_W + 12 : 0)),
-                contentX + LABEL_W, rowY + textOffset, UiTheme.TEXT);
+        if (!TemplateMode.isEditing()) {
+            UiDraw.text(UiDraw.fit(name, contentW - LABEL_W - (previewW > 0 ? PREVIEW_W + 12 : 0)),
+                    contentX + LABEL_W, rowY + textOffset, UiTheme.TEXT);
+        }
         rowY += rowH;
 
         if (hasStrategyRow()) {
@@ -573,6 +623,9 @@ public class GuiStrategyEditor extends UiScreen {
         }
 
         UiDraw.text("COORDS", contentX, rowY + textOffset, UiTheme.TEXT_MUTED);
+        if (templateMarker) {
+            UiDraw.text("TEMPLATE", contentX + LABEL_W, rowY + textOffset, UiTheme.DANGER_HOVER);
+        }
         rowY += rowH;
 
         for (String label : labels) {
@@ -584,6 +637,33 @@ public class GuiStrategyEditor extends UiScreen {
             drawPreview(jump);
         }
 
+    }
+
+    // -------------------------
+    // Template mode navigation
+    // -------------------------
+
+    private List<Entry> navLevelEntries() {
+        List<Entry> entries = new ArrayList<Entry>();
+        entries.add(Entry.choice("Jump", TemplateMode.getNavLevel() == 0, () -> TemplateMode.setNavLevel(0)));
+
+        ParkourMap map = TemplateMode.map();
+        int levels = map != null ? map.getMaxSectionLevelsAllowed() : 0;
+        for (int level = 1; level <= levels; level++) {
+            final int chosen = level;
+            entries.add(Entry.choice(map.getSectionName(level - 1), TemplateMode.getNavLevel() == level,
+                    () -> TemplateMode.setNavLevel(chosen)));
+        }
+        return entries;
+    }
+
+    /** Moves the template's current jump by a jump or a section and reopens the editor on it. */
+    private void navigate(int direction) {
+        TemplateMode.step(direction);
+        GuiScreen next = openForTemplate(parent, after);
+        if (next != null) {
+            Minecraft.getMinecraft().displayGuiScreen(next);
+        }
     }
 
     /** The player's facing as shown in F3, one decimal, e.g. "-12.3". */

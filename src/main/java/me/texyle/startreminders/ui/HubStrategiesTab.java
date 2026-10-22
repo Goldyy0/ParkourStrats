@@ -65,7 +65,7 @@ final class HubStrategiesTab implements HubTab {
         newButton = new UiButton("+ New strategy", UiButton.Style.PRIMARY, this::onPrimaryAction);
 
         editButton = new UiButton("Edit", UiButton.Style.SECONDARY, this::editOrConvertSelected);
-        moreButton = new UiButton("More", UiButton.Style.GHOST, this::openJumpMenu);
+        moreButton = new UiButton("More", UiButton.Style.MUTED_ACCENT, this::openJumpMenu);
 
         table.setOnActivate(jump -> editOrConvertSelected());
         table.setOnMove(this::dropJump);
@@ -288,23 +288,25 @@ final class HubStrategiesTab implements HubTab {
 
     private void openJumpMenu() {
         final Jump jump = selectedJump();
-        if (jump == null || map == null) return;
+        if (map == null) return;
 
         boolean restored = isRestoredMap();
         int index = map.getJumps() != null ? indexOf(map.getJumps(), jump) : -1;
         int size = map.getJumps() != null ? map.getJumps().size() : 0;
 
+        boolean has = jump != null;
+
         List<Entry> entries = new ArrayList<Entry>();
-        entries.add(Entry.item("Edit strategy...", this::editSelected));
-        entries.add(Entry.item("Rename...", !restored, () -> renameJump(jump)));
+        entries.add(Entry.item("Edit strategy...", has, this::editSelected));
+        entries.add(Entry.item("Rename...", has && !restored, () -> renameJump(jump)));
         entries.add(new Entry("Move jumps", !restored && size > 1, table.isMoveMode(), false,
                 () -> table.setMoveMode(!table.isMoveMode())));
         if (restored) {
-            entries.add(Entry.item("Convert to Global...", () -> convertToGlobal(jump)));
+            entries.add(new Entry("Convert to Global...", has, false, true, () -> convertToGlobal(jump)));
         } else {
-            entries.add(Entry.item("Transfer to...", () -> hub.open(new GuiTransferJump(hub, map, jump))));
+            entries.add(new Entry("Transfer to...", has, false, true, () -> hub.open(new GuiTransferJump(hub, map, jump))));
         }
-        entries.add(Entry.danger("Remove...", true, () -> removeJump(jump)));
+        entries.add(Entry.danger("Remove...", has, () -> removeJump(jump)));
 
         popup.open(moreButton.x + moreButton.w - 180, moreButton.y - entries.size() * 18 - 12, 180, entries);
     }
@@ -370,7 +372,7 @@ final class HubStrategiesTab implements HubTab {
 
         Jump selected = selectedJump();
         editButton.enabled = selected != null;
-        moreButton.enabled = selected != null;
+        moreButton.enabled = map != null;
 
         for (UiWidget widget : widgets) {
             widget.draw(mouseX, mouseY);

@@ -7,12 +7,9 @@ import java.util.List;
 import me.texyle.startreminders.data.MapSection;
 import me.texyle.startreminders.data.ParkourMap;
 import me.texyle.startreminders.gui.hierarchy.GuiConfirm;
-import me.texyle.startreminders.gui.hierarchy.GuiTextPrompt;
 import me.texyle.startreminders.persistence.BuiltinContainers;
 import me.texyle.startreminders.reminders.SelectionState;
 import me.texyle.startreminders.services.SectionService;
-import me.texyle.startreminders.sheets.SectionSyncService;
-import me.texyle.startreminders.utils.ChatUtils;
 
 /**
  * The sections (named, colored ranges of jumps) of the current map, level by level.
@@ -37,7 +34,6 @@ final class HubSectionsTab implements HubTab {
     private UiSegmented levelSelector;
     private final UiList<MapSection> list;
     private final UiButton newButton;
-    private final UiButton syncButton;
     private final UiButton editButton;
     private final UiButton deleteButton;
     private final List<UiWidget> widgets = new ArrayList<UiWidget>();
@@ -51,13 +47,11 @@ final class HubSectionsTab implements HubTab {
                 .onActivate(s -> editSection());
 
         newButton = new UiButton("+ New section", UiButton.Style.PRIMARY, this::newSection);
-        syncButton = new UiButton("Sync from sheet...", UiButton.Style.SECONDARY, this::syncFromSheet);
         editButton = new UiButton("Edit", UiButton.Style.SECONDARY, this::editSection);
         deleteButton = new UiButton("Delete", UiButton.Style.DANGER, this::deleteSection);
 
         widgets.add(list);
         widgets.add(newButton);
-        widgets.add(syncButton);
         widgets.add(editButton);
         widgets.add(deleteButton);
     }
@@ -133,9 +127,7 @@ final class HubSectionsTab implements HubTab {
         levelSelector.setBounds(x, y + 1, levelSelector.preferredWidth(), 18);
 
         int newW = newButton.preferredWidth();
-        int syncW = syncButton.preferredWidth();
         newButton.setBounds(x + w - newW, y, newW, UiTheme.CONTROL_HEIGHT);
-        syncButton.setBounds(newButton.x - GAP - syncW, y, syncW, UiTheme.CONTROL_HEIGHT);
 
         int listTop = y + UiTheme.CONTROL_HEIGHT + GAP;
         list.setBounds(x, listTop, w, h - UiTheme.CONTROL_HEIGHT - GAP - FOOTER_H - GAP);
@@ -164,7 +156,6 @@ final class HubSectionsTab implements HubTab {
         }
 
         levelSelector.draw(mouseX, mouseY);
-        syncButton.draw(mouseX, mouseY);
         newButton.draw(mouseX, mouseY);
 
         list.draw(mouseX, mouseY);
@@ -316,37 +307,6 @@ final class HubSectionsTab implements HubTab {
 
                     @Override
                     public void onNo() { }
-                }));
-    }
-
-    private void syncFromSheet() {
-        final ParkourMap map = map();
-        if (map == null) return;
-
-        hub.open(new GuiTextPrompt(hub, "Sync sections: paste spreadsheet URL", map.getSheetUrl(),
-                new GuiTextPrompt.IResultHandler() {
-                    @Override
-                    public void onConfirm(String text) {
-                        String url = (text != null) ? text.trim() : "";
-
-                        // The same URL is used for sheet sync and section sync.
-                        map.setSheetUrl(url);
-
-                        boolean ok = SectionSyncService.syncSectionsFromAppsScript(map, url);
-                        if (ok) {
-                            ChatUtils.info("Sections synced from spreadsheet.");
-                        } else {
-                            // SectionSyncService already posts a detailed error; add a generic one only if it did not.
-                            String err = SectionSyncService.getLastSectionSyncError();
-                            if (err == null || err.trim().isEmpty()) {
-                                ChatUtils.error("Section sync failed.");
-                            }
-                        }
-                        list.clearSelection();
-                    }
-
-                    @Override
-                    public void onCancel() { }
                 }));
     }
 }

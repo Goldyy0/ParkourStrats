@@ -14,6 +14,7 @@ import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
 
 import me.texyle.startreminders.data.Jump;
+import me.texyle.startreminders.template.TemplateMode;
 import me.texyle.startreminders.data.MapSection;
 import me.texyle.startreminders.data.ParkourMap;
 import me.texyle.startreminders.gui.GuiScissor;
@@ -51,7 +52,10 @@ public class UiJumpTable extends UiWidget {
     private static final int WHEEL_STEP = 24;
     private static final long DOUBLE_CLICK_MS = 320L;
 
-    private static final int NUM_W = 30;
+    private static final int NUM_W = 38;
+    /** Extra room in the number column for the checkbox of the sheet review. */
+    private static final int CHECK_W = 16;
+    private static final int COLOR_EXCLUDED = 0xB0121118;
     private static final int SECTION_W = 80;
     private static final int COMPACT_SECTION_W = 16;
     private static final int JUMP_W = 124;
@@ -101,6 +105,8 @@ public class UiJumpTable extends UiWidget {
     }
 
     private ParkourMap map;
+    /** This map is in template mode: jumps without a position get a red bar. */
+    private boolean templateRows;
     private String filter = "";
     private String emptyText = "";
     private Consumer<Jump> onActivate;
@@ -109,6 +115,25 @@ public class UiJumpTable extends UiWidget {
     public interface MoveHandler {
         void onMove(Jump moved, Jump anchor, boolean after);
     }
+
+    /**
+     * The review of a sheet before it is imported: every jump has a checkbox, and jumps outside the chosen first and
+     * last jump (or unchecked) are dimmed.
+     */
+    public interface Review {
+        /** Checked and inside the first..last range: will be imported. */
+        boolean isIncluded(Jump jump);
+
+        boolean isChecked(Jump jump);
+
+        boolean isCropStart(Jump jump);
+
+        boolean isCropEnd(Jump jump);
+
+        void toggle(Jump jump);
+    }
+
+    private Review review;
 
     private MoveHandler onMove;
     private boolean moveMode;
@@ -190,6 +215,15 @@ public class UiJumpTable extends UiWidget {
     /** The window's popup, used for the section menus ("fast travel") in the header. */
     public void setPopup(UiPopup popup) {
         this.popup = popup;
+    }
+
+    public void setReview(Review review) {
+        this.review = review;
+        refresh();
+    }
+
+    private int numW() {
+        return NUM_W + (review != null ? CHECK_W : 0);
     }
 
     public void setOnMove(MoveHandler handler) {
@@ -410,7 +444,7 @@ public class UiJumpTable extends UiWidget {
 
         int baseSectionW = compactSections ? COMPACT_SECTION_W : SECTION_W;
         sectionW = baseSectionW;
-        int leftNatural = NUM_W + sectionCount * baseSectionW + JUMP_W;
+        int leftNatural = numW() + sectionCount * baseSectionW + JUMP_W;
         int textNatural = 0;
         for (int w0 : TEXT_BASE_W) textNatural += w0;
         int natural = leftNatural + textNatural;
@@ -432,9 +466,9 @@ public class UiJumpTable extends UiWidget {
             needH = true;
 
             // Keep the left part frozen even on maps with many section levels by narrowing the section columns.
-            int budget = (int) (viewW * MAX_FROZEN_SHARE) - NUM_W - JUMP_W;
+            int budget = (int) (viewW * MAX_FROZEN_SHARE) - numW() - JUMP_W;
             if (sectionCount == 0) {
-                frozenEnabled = (NUM_W + JUMP_W) <= viewW * MAX_FROZEN_SHARE;
+                frozenEnabled = (numW() + JUMP_W) <= viewW * MAX_FROZEN_SHARE;
             } else {
                 int fitted = Math.min(baseSectionW, budget / sectionCount);
                 // Compact stripes are already as narrow as they get; full columns may shrink a little.
@@ -443,7 +477,7 @@ public class UiJumpTable extends UiWidget {
             }
         }
 
-        add(Kind.NUMBER, 0, NUM_W);
+        add(Kind.NUMBER, 0, numW());
         for (int i = 0; i < sectionCount; i++) add(Kind.SECTION, i, sectionW);
         add(Kind.JUMP, 0, JUMP_W);
         for (int i = 0; i < textW.length; i++) add(Kind.TEXT, i, textW[i]);
@@ -603,6 +637,7 @@ public class UiJumpTable extends UiWidget {
         if (!visible) return;
         ensureLayout();
         clampScroll();
+        templateRows = map != null && TemplateMode.map() == map;
 
         UiDraw.box(x, y, frameW(), frameH(), UiTheme.CARD_BG, UiTheme.CARD_BORDER);
 
@@ -783,6 +818,23 @@ public class UiJumpTable extends UiWidget {
     }
 
     private void drawCell(Row r, Col c, int cx, int ry, boolean firstVisibleRow) {
+        drawCellContent(r, c, cx, ry, firstVisibleRow);
+        if (review == null) return;
+
+        // Review: dim what will not be imported (the checkbox stays clear) and mark the first / last jump.
+        if (!review.isIncluded(r.jump)) {
+            int skip = c.kind == Kind.NUMBER ? PAD_X + CHECK_W : 0;
+            UiDraw.fill(cx + skip, ry, c.width - skip, r.height, COLOR_EXCLUDED);
+        }
+        if (r.firstOfGroup() && review.isCropStart(r.jump)) {
+            UiDraw.fill(cx, ry, c.width, 2, UiTheme.ACCENT_HOVER);
+        }
+        if (r.lastOfGroup() && review.isCropEnd(r.jump)) {
+            UiDraw.fill(cx, ry + r.height - 2, c.width, 2, UiTheme.ACCENT_HOVER);
+        }
+    }
+
+    private void drawCellContent(Row r, Col c, int cx, int ry, boolean firstVisibleRow) {
         switch (c.kind) {
             case NUMBER:
                 drawNumberCell(r, cx, ry);
@@ -809,9 +861,21 @@ public class UiJumpTable extends UiWidget {
     }
 
     private void drawNumberCell(Row r, int cx, int ry) {
-        if (r.firstOfGroup()) {
-            UiDraw.text(String.valueOf(r.jumpIndex + 1), cx + PAD_X + 2, lineY(ry), UiTheme.TEXT_MUTED);
+        if (!r.firstOfGroup()) return;
+
+        int textX = cx + PAD_X + 2;
+        if (review != null) {
+            int boxY = ry + (ROW_H - 10) / 2;
+            boolean checked = review.isChecked(r.jump);
+            UiDraw.box(cx + PAD_X, boxY, 10, 10, checked ? UiTheme.ACCENT : UiTheme.CONTROL_BG, UiTheme.CONTROL_BORDER);
+            if (checked) {
+                UiDraw.fill(cx + PAD_X + 2, boxY + 5, 2, 2, 0xFFFFFFFF);
+                UiDraw.fill(cx + PAD_X + 4, boxY + 6, 2, 2, 0xFFFFFFFF);
+                UiDraw.fill(cx + PAD_X + 6, boxY + 3, 2, 4, 0xFFFFFFFF);
+            }
+            textX += CHECK_W;
         }
+        UiDraw.text(String.valueOf(r.jumpIndex + 1), textX, lineY(ry), UiTheme.TEXT_MUTED);
     }
 
     /** Fill color of the section cell of this level for the row, or 0 if no section covers it. */
@@ -846,6 +910,12 @@ public class UiJumpTable extends UiWidget {
         boolean multi = r.groupSize > 1;
         int textW = c.width - (multi ? COUNT_LABEL_W : 0);
 
+        // Template mode: a red bar along all strategies of a jump that has no position yet.
+        boolean waiting = templateRows && !TemplateMode.isPlaced(r.jump);
+        if (waiting) {
+            UiDraw.fill(cx + c.width - 3, ry, 3, r.height, UiTheme.DANGER_HOVER);
+        }
+
         // The name is drawn once per group, from the group's top, over the rows of all its strategies
         // (or from the first visible row when the group's own first row has scrolled away).
         if (r.firstOfGroup() || firstVisibleRow) {
@@ -858,7 +928,7 @@ public class UiJumpTable extends UiWidget {
             UiDraw.text(label, labelX, lineY(ry), UiTheme.TEXT_DISABLED);
 
             // Marks the strategy that is shown in the game, right in front of its number.
-            if (r.jump.getActiveReminderIndex() == r.groupRowIndex) {
+            if (!waiting && r.jump.getActiveReminderIndex() == r.groupRowIndex) {
                 UiDraw.fill(labelX - 6, ry + (ROW_H - 10) / 2, 3, 10, UiTheme.ACCENT_HOVER);
             }
         }
@@ -868,6 +938,10 @@ public class UiJumpTable extends UiWidget {
     private void drawJumpName(Row r, int cx, int groupY, int textW) {
         int lineH = lineHeight();
         int maxLines = Math.max(1, (r.groupHeight - PAD_Y * 2) / lineH);
+
+        // Gone from the sheet: red. Not placed in the world yet: dim.
+        boolean unplaced = r.jump.getX() == 0 && r.jump.getY() == 0 && r.jump.getZ() == 0;
+        int nameColor = r.jump.isSheetMissing() ? UiTheme.DANGER_HOVER : (unplaced && review == null ? UiTheme.TEXT_MUTED : UiTheme.TEXT);
 
         List<String> lines = wrap(jumpName(r.jump), textW);
         int shown = Math.min(maxLines, lines.size());
@@ -880,7 +954,7 @@ public class UiJumpTable extends UiWidget {
                 // More text follows: always end in dots, even when this line itself fits.
                 line = font().trimStringToWidth(line, Math.max(0, textW - PAD_X * 2 - UiDraw.width("..."))) + "...";
             }
-            UiDraw.text(line, cx + PAD_X, startY + i * lineH, UiTheme.TEXT);
+            UiDraw.text(line, cx + PAD_X, startY + i * lineH, nameColor);
         }
     }
 
@@ -1127,6 +1201,10 @@ public class UiJumpTable extends UiWidget {
             colors.add(noCoords ? UiTheme.TEXT_DISABLED : UiTheme.TEXT_MUTED);
             lines.add(strategies + (strategies == 1 ? " strategy" : " strategies"));
             colors.add(UiTheme.TEXT_MUTED);
+            if (j.isSheetMissing()) {
+                lines.add("No longer in the sheet");
+                colors.add(UiTheme.DANGER_HOVER);
+            }
         } else if (over.kind == Kind.TEXT) {
             // Only text that was cut off needs a tooltip; it shows the whole text.
             String text = textOf(r, over.index);
@@ -1192,6 +1270,16 @@ public class UiJumpTable extends UiWidget {
         if (index < 0) return true;
 
         Row r = rows.get(index);
+
+        if (review != null && !cols.isEmpty()) {
+            double local = (mouseX - colScreenX(cols.get(0))) / (double) zoom;
+            if (local >= 0 && local < PAD_X + CHECK_W) {
+                review.toggle(r.jump);
+                selectedJump = r.jump;
+                return true;
+            }
+        }
+
         long now = Minecraft.getSystemTime();
         boolean isDouble = !moveMode && (r.groupIndex == lastClickedGroup) && (now - lastClickMs) <= DOUBLE_CLICK_MS;
 

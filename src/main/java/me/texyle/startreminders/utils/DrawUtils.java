@@ -168,7 +168,7 @@ public class DrawUtils {
      * - Line 3: Strafe
      * - Line 4: Turn
      */
-    private static List<String> buildDisplayLines(List<String> lines) {
+    public static List<String> buildDisplayLines(List<String> lines) {
         ArrayList<String> out = new ArrayList<String>();
         if (lines == null) {
             return out;
