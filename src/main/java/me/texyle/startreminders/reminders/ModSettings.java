@@ -27,8 +27,17 @@ public class ModSettings {
     // Status messages the mod prints in chat (Record taps always shows its prompt). Default is true.
     public boolean chatMessages = true;
 
-    // Where a new strategy label is placed: blocks in front of the player (0..5, default 1) and blocks above
-    // the feet block (0..5, default 2).
+    // Where a new strategy label is placed: blocks in front of the player (0..2, default 1) and blocks above
+    // the feet block (0..2, default 2).
     public int labelForward = 1;
     public int labelUp = 2;
+
+    // How far (blocks, 1..100) the edit key looks for a jump in "Crosshair" mode. Default is 50.
+    public int crosshairRange = 50;
+
+    // How far (blocks, 1..100) the edit key looks for a jump in "Nearest" mode. Default is 50.
+    public int nearestRange = 50;
+
+    // Template mode: which section level the crosshair text shows (0 = the innermost section, 1..5 = that level).
+    public int sectionIndicatorLevel = 0;
 }

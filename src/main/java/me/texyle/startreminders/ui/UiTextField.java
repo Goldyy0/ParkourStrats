@@ -106,6 +106,11 @@ public class UiTextField extends UiWidget {
         field.drawTextBox();
     }
 
+    /** Asks for a tooltip with this text next to the mouse at the end of the frame (other widgets with cut-off text). */
+    static void requestTooltip(String text) {
+        pendingTooltip = text;
+    }
+
     /** Forgets the tooltip of the last frame; call before drawing the widgets. */
     static void clearTooltip() {
         pendingTooltip = null;

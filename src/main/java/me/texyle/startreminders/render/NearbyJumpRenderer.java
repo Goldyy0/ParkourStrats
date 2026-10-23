@@ -87,7 +87,7 @@ public class NearbyJumpRenderer {
 			if (s == null || s.getMaps() == null) continue;
 
 			for (ParkourMap m : s.getMaps()) {
-				if (m == null || m.getJumps() == null) continue;
+				if (m == null || m.getJumps() == null || !m.isVisibleInGame()) continue;
 
 				for (Jump j : m.getJumps()) {
 					if (j == null) continue;

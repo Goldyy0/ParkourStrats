@@ -14,6 +14,7 @@ import me.texyle.startreminders.data.ServerProfile;
 import me.texyle.startreminders.persistence.BuiltinContainers;
 import me.texyle.startreminders.persistence.DataStoreRepository;
 import me.texyle.startreminders.reminders.SelectionState;
+import me.texyle.startreminders.reminders.UserPreferences;
 import me.texyle.startreminders.services.SectionLayoutService;
 import me.texyle.startreminders.utils.ChatUtils;
 import me.texyle.startreminders.utils.PlayerBlockPos;
@@ -213,6 +214,16 @@ public final class TemplateMode {
     /** Name of the innermost section the jump is in, or "" if it is in none. */
     public static String sectionName(ParkourMap map, int jumpIndex) {
         MapSection section = innermostSection(map, jumpIndex);
+        return section != null ? section.getName() : "";
+    }
+
+    /** Name of the section the player chose to see under the crosshair (see Section indicator), or "". */
+    public static String indicatorSectionName(ParkourMap map, int jumpIndex) {
+        int level = UserPreferences.getSectionIndicatorLevel();
+        if (level == 0) return sectionName(map, jumpIndex);
+        if (map == null || level > map.getMaxSectionLevelsAllowed()) return "";
+
+        MapSection section = SectionLayoutService.findSectionContainingIndex(map.getSectionsForLevel(level), jumpIndex);
         return section != null ? section.getName() : "";
     }
 

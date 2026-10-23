@@ -9,6 +9,9 @@ public class ParkourMap {
     // Template mode: the create key places the jumps of this map one by one instead of opening a dialog.
     private boolean templateMode = false;
 
+    // True hides the map in the game: its jumps are not drawn and not picked. Absent in old files = shown.
+    private boolean hiddenInGame = false;
+
     // Which part of the linked sheet is imported; null = all of it.
     private SheetFilter sheetFilter;
 
@@ -67,6 +70,14 @@ public class ParkourMap {
 
     public void setSheetFilter(SheetFilter sheetFilter) {
         this.sheetFilter = sheetFilter;
+    }
+
+    public boolean isVisibleInGame() {
+        return !hiddenInGame;
+    }
+
+    public void setVisibleInGame(boolean visible) {
+        this.hiddenInGame = !visible;
     }
 
     public boolean isTemplateMode() {

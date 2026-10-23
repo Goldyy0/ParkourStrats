@@ -8,6 +8,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import me.texyle.startreminders.utils.RepeatMarker;
+
 /** A downloaded strategy sheet: the header, its column mapping and the data rows (with cell colors if known). */
 public final class SheetData {
 
@@ -201,7 +203,30 @@ public final class SheetData {
 			return invalid("The sheet has a header but no data rows.");
 		}
 
-		return new SheetData(header, cols, rows, hasColors, null);
+		SheetData data = new SheetData(header, cols, rows, hasColors, null);
+		data.resolveRepeatMarkers();
+		return data;
+	}
+
+	/** A "^" in a strategy column stands for the cell above it (and when that is a "^" too, the one above that). */
+	private void resolveRepeatMarkers() {
+		int[] strategyCols = { cols.position, cols.facing, cols.setup, cols.strategy, cols.strafe, cols.turn, cols.author, cols.tips };
+		for (int col : strategyCols) {
+			if (col < 0) continue;
+
+			String above = "";
+			for (Cell[] row : rows) {
+				if (col >= row.length) {
+					above = "";
+					continue;
+				}
+				Cell cell = row[col];
+				if (cell.v.indexOf('^') >= 0) {
+					row[col] = new Cell(RepeatMarker.resolve(cell.v, above), cell.bg);
+				}
+				above = row[col].v;
+			}
+		}
 	}
 
 	private static boolean isBlank(List<Cell> row) {

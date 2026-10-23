@@ -62,7 +62,7 @@ final class HubStrategiesTab implements HubTab {
         mapDropdown = new UiDropdown(popup, "Map", this::mapLabel, this::mapEntries)
                 .valueColor(() -> SpecialColors.of(map));
 
-        newButton = new UiButton("+ New strategy", UiButton.Style.PRIMARY, this::onPrimaryAction);
+        newButton = new UiButton("+ New jump", UiButton.Style.PRIMARY, this::onPrimaryAction);
 
         editButton = new UiButton("Edit", UiButton.Style.SECONDARY, this::editOrConvertSelected);
         moreButton = new UiButton("More", UiButton.Style.MUTED_ACCENT, this::openJumpMenu);
@@ -249,7 +249,7 @@ final class HubStrategiesTab implements HubTab {
         hub.open(GuiStrategyEditor.forEdit(hub, hub));
     }
 
-    /** "+ New strategy" normally; in RestoredStrats the one useful action is importing the old files. */
+    /** "+ New jump" normally; in RestoredStrats the one useful action is importing the old files. */
     private void onPrimaryAction() {
         if (isRestoredMap()) {
             // RestoredStrats: run BOTH imports (legacy + BetterLinkCraft) each time
@@ -264,7 +264,7 @@ final class HubStrategiesTab implements HubTab {
     }
 
     private void placePrimaryButton() {
-        newButton.setLabel(isRestoredMap() ? "Import" : "+ New strategy");
+        newButton.setLabel(isRestoredMap() ? "Import" : "+ New jump");
         editButton.setLabel(isRestoredMap() ? "Convert" : "Edit");
         int newW = newButton.preferredWidth();
         newButton.setBounds(x + w - newW, y, newW, TOOLBAR_H);
@@ -391,7 +391,7 @@ final class HubStrategiesTab implements HubTab {
             empty = "No map selected";
         } else if (!hasJumps) {
             empty = "No jumps in this map yet";
-            hint = isRestoredMap() ? "Use Import to bring in your old strategies" : "Use + New strategy to add the first one";
+            hint = isRestoredMap() ? "Use Import to bring in your old strategies" : "Use + New jump to add the first one";
         } else {
             empty = "No jumps match your search";
         }

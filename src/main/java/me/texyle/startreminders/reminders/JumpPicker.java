@@ -17,7 +17,7 @@ public final class JumpPicker {
 
 	private JumpPicker() {}
 
-	public static Jump selectJumpInCrosshair(double maxRangeBlocks, double maxPerpDistBlocks) {
+	public static Jump selectJumpInCrosshair(double maxRangeBlocks) {
 		DataStoreRepository.ensureLoaded();
 
 		Minecraft mc = Minecraft.getMinecraft();
@@ -29,19 +29,19 @@ public final class JumpPicker {
 
 		JumpPickResult best = null;
 
-		JumpPickResult g = findBestJumpInCrosshairInStore(DataStoreRepository.getGlobalStore(), player, maxRangeBlocks, maxPerpDistBlocks);
+		JumpPickResult g = findBestJumpInCrosshairInStore(DataStoreRepository.getGlobalStore(), player, maxRangeBlocks);
 		if (g != null && g.jump != null) {
 			best = g;
 		}
 
-		JumpPickResult r = findBestJumpInCrosshairInStore(DataStoreRepository.getRestoredStore(), player, maxRangeBlocks, maxPerpDistBlocks);
+		JumpPickResult r = findBestJumpInCrosshairInStore(DataStoreRepository.getRestoredStore(), player, maxRangeBlocks);
 		if (r != null && r.jump != null) {
 			if (best == null || isCrosshairPickBetter(r, best)) {
 				best = r;
 			}
 		}
 
-		JumpPickResult s = findBestJumpInCrosshairInStore(DataStoreRepository.getSharedStore(), player, maxRangeBlocks, maxPerpDistBlocks);
+		JumpPickResult s = findBestJumpInCrosshairInStore(DataStoreRepository.getSharedStore(), player, maxRangeBlocks);
 		if (s != null && s.jump != null) {
 			if (best == null || isCrosshairPickBetter(s, best)) {
 				best = s;
@@ -62,21 +62,36 @@ public final class JumpPicker {
 	}
 
 	private static boolean isCrosshairPickBetter(JumpPickResult a, JumpPickResult b) {
-		// Prefer smaller perpendicular distance to view ray,
-		// then prefer closer along-ray distance (t).
+		// What matters is how close to the middle of the screen a jump looks, i.e. the angle to the view ray.
+		// When two jumps look equally centered, the nearer one wins (the other is just standing behind it).
 		if (a == null || b == null) return false;
 
-		if (a.perpDistSq < b.perpDistSq) return true;
-		if (a.perpDistSq > b.perpDistSq) return false;
-
+		double angleA = a.angle();
+		double angleB = b.angle();
+		if (Math.abs(angleA - angleB) > SAME_ANGLE) {
+			return angleA < angleB;
+		}
 		return a.rayT < b.rayT;
+	}
+
+	/** Two jumps whose angles to the view ray differ by less than this (radians, about 0.6 degrees) look equally centered. */
+	private static final double SAME_ANGLE = 0.01;
+
+	/** How far from the view ray a jump may be: tight close up, growing with the distance (blocks). */
+	private static final double MIN_TOLERANCE = 0.9;
+	private static final double TOLERANCE_PER_BLOCK = 0.02;
+
+	/** Only jumps of maps that are on in the game, with a place, strategies and still in the sheet count. */
+	private static boolean isCandidate(ParkourMap map, Jump jump) {
+		if (jump == null || !map.isVisibleInGame() || jump.isSheetMissing()) return false;
+		if (jump.getX() == 0 && jump.getY() == 0 && jump.getZ() == 0) return false;
+		return jump.getReminders() != null && !jump.getReminders().isEmpty();
 	}
 
 	private static JumpPickResult findBestJumpInCrosshairInStore(
 			DataStore store,
 			EntityPlayerSP player,
-			double maxRangeBlocks,
-			double maxPerpDistBlocks
+			double maxRangeBlocks
 	) {
 		if (store == null || store.getServers() == null || player == null) {
 			return null;
@@ -102,8 +117,6 @@ public final class JumpPicker {
 		lz /= len;
 
 		double maxRange = Math.max(0.0, maxRangeBlocks);
-		double maxPerp = Math.max(0.0, maxPerpDistBlocks);
-		double maxPerpSq = maxPerp * maxPerp;
 
 		JumpPickResult best = null;
 
@@ -114,20 +127,11 @@ public final class JumpPicker {
 				if (m == null || m.getJumps() == null) continue;
 
 				for (Jump j : m.getJumps()) {
-					if (j == null) continue;
+					if (!isCandidate(m, j)) continue;
 
 					int x = j.getX();
 					int y = j.getY();
 					int z = j.getZ();
-
-					if (x == 0 && y == 0 && z == 0) {
-						continue;
-					}
-
-					// Only consider jumps that actually have strategies
-					if (j.getReminders() == null || j.getReminders().isEmpty()) {
-						continue;
-					}
 
 					// Use center of block for nicer aiming
 					double jx = x + 0.5;
@@ -155,7 +159,8 @@ public final class JumpPicker {
 					double dz = jz - cz;
 
 					double perpSq = (dx * dx) + (dy * dy) + (dz * dz);
-					if (perpSq > maxPerpSq) {
+					double tolerance = MIN_TOLERANCE + TOLERANCE_PER_BLOCK * t;
+					if (perpSq > tolerance * tolerance) {
 						continue;
 					}
 
@@ -170,7 +175,7 @@ public final class JumpPicker {
 		return best;
 	}
 
-	public static Jump selectNearestJumpToPlayer() {
+	public static Jump selectNearestJumpToPlayer(double maxRangeBlocks) {
 		DataStoreRepository.ensureLoaded();
 
 		Minecraft mc = Minecraft.getMinecraft();
@@ -187,7 +192,7 @@ public final class JumpPicker {
 		double bestDistSq = Double.MAX_VALUE;
 
 		// Search: Global + Restored + Shared (in that order)
-		JumpPickResult globalPick = findNearestJumpInStore(DataStoreRepository.getGlobalStore(), player);
+		JumpPickResult globalPick = findNearestJumpInStore(DataStoreRepository.getGlobalStore(), player, maxRangeBlocks);
 		if (globalPick != null && globalPick.jump != null) {
 			bestJump = globalPick.jump;
 			bestMap = globalPick.map;
@@ -195,7 +200,7 @@ public final class JumpPicker {
 			bestDistSq = globalPick.distSq;
 		}
 
-		JumpPickResult restoredPick = findNearestJumpInStore(DataStoreRepository.getRestoredStore(), player);
+		JumpPickResult restoredPick = findNearestJumpInStore(DataStoreRepository.getRestoredStore(), player, maxRangeBlocks);
 		if (restoredPick != null && restoredPick.jump != null && restoredPick.distSq < bestDistSq) {
 			bestJump = restoredPick.jump;
 			bestMap = restoredPick.map;
@@ -203,7 +208,7 @@ public final class JumpPicker {
 			bestDistSq = restoredPick.distSq;
 		}
 
-		JumpPickResult sharedPick = findNearestJumpInStore(DataStoreRepository.getSharedStore(), player);
+		JumpPickResult sharedPick = findNearestJumpInStore(DataStoreRepository.getSharedStore(), player, maxRangeBlocks);
 		if (sharedPick != null && sharedPick.jump != null && sharedPick.distSq < bestDistSq) {
 			bestJump = sharedPick.jump;
 			bestMap = sharedPick.map;
@@ -255,9 +260,14 @@ public final class JumpPicker {
 			this.perpDistSq = perpDistSq;
 			this.rayT = rayT;
 		}
+
+		/** Angle between the view ray and the direction to the jump (radians, small-angle approximation). */
+		double angle() {
+			return Math.sqrt(perpDistSq) / Math.max(rayT, 0.0001);
+		}
 	}
 
-	private static JumpPickResult findNearestJumpInStore(DataStore store, EntityPlayerSP player) {
+	private static JumpPickResult findNearestJumpInStore(DataStore store, EntityPlayerSP player, double maxRangeBlocks) {
 		if (store == null || store.getServers() == null || player == null) {
 			return null;
 		}
@@ -265,7 +275,7 @@ public final class JumpPicker {
 		Jump bestJump = null;
 		ParkourMap bestMap = null;
 		ServerProfile bestServer = null;
-		double bestDistSq = Double.MAX_VALUE;
+		double bestDistSq = maxRangeBlocks * maxRangeBlocks;
 
 		for (ServerProfile s : store.getServers()) {
 			if (s == null || s.getMaps() == null) continue;
@@ -274,19 +284,12 @@ public final class JumpPicker {
 				if (m == null || m.getJumps() == null) continue;
 
 				for (Jump j : m.getJumps()) {
-					if (j == null) continue;
+					if (!isCandidate(m, j)) continue;
 
-					int x = j.getX();
-					int y = j.getY();
-					int z = j.getZ();
-
-					if (x == 0 && y == 0 && z == 0) {
-						continue;
-					}
-
-					double dx = player.posX - x;
-					double dy = player.posY - y;
-					double dz = player.posZ - z;
+					// To the middle of the jump's block
+					double dx = player.posX - (j.getX() + 0.5);
+					double dy = player.posY - (j.getY() + 0.5);
+					double dz = player.posZ - (j.getZ() + 0.5);
 					double distSq = (dx * dx) + (dy * dy) + (dz * dz);
 
 					if (distSq < bestDistSq) {

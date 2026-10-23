@@ -45,7 +45,10 @@ public class UiDropdown extends UiWidget {
         String value = valueText.get();
         int special = valueColor != null ? valueColor.getAsInt() : 0;
         int color = special != 0 ? special : (enabled ? UiTheme.TEXT : UiTheme.TEXT_DISABLED);
-        UiDraw.text(UiDraw.fit(value != null ? value : "-", maxValueW), valueX, textY, color);
+        String full = value != null ? value : "-";
+        String shown = UiDraw.ellipsize(full, maxValueW);
+        UiDraw.text(shown, valueX, textY, color);
+        if (hover && !shown.equals(full)) UiTextField.requestTooltip(full);
 
         UiDraw.text("v", x + w - 12, textY, UiTheme.TEXT_MUTED);
     }

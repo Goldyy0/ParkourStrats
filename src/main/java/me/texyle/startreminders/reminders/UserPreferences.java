@@ -50,23 +50,55 @@ public final class UserPreferences {
 		SettingsRepository.save();
 	}
 
-	/** Blocks in front of the player (0..5) where a new strategy label is placed. */
-	public static int getLabelForward() {
-		return Math.max(0, Math.min(5, SettingsRepository.get().labelForward));
+	/** How far (blocks, 1..100) the edit key looks for a jump in the crosshair. */
+	public static int getCrosshairRange() {
+		int range = SettingsRepository.get().crosshairRange;
+		return range <= 0 ? 50 : Math.max(1, Math.min(100, range));
 	}
 
-	public static void setLabelForward(int blocks) {
-		SettingsRepository.get().labelForward = Math.max(0, Math.min(5, blocks));
+	public static void setCrosshairRange(int blocks) {
+		SettingsRepository.get().crosshairRange = Math.max(1, Math.min(100, blocks));
 		SettingsRepository.save();
 	}
 
-	/** Blocks above the player's feet block (0..5) where a new strategy label is placed. */
+	/** Template mode: the section level written under the crosshair; 0 = the innermost section. */
+	public static int getSectionIndicatorLevel() {
+		return Math.max(0, Math.min(5, SettingsRepository.get().sectionIndicatorLevel));
+	}
+
+	public static void setSectionIndicatorLevel(int level) {
+		SettingsRepository.get().sectionIndicatorLevel = Math.max(0, Math.min(5, level));
+		SettingsRepository.save();
+	}
+
+	/** How far (blocks, 1..100) the edit key looks for the nearest jump. */
+	public static int getNearestRange() {
+		int range = SettingsRepository.get().nearestRange;
+		return range <= 0 ? 50 : Math.max(1, Math.min(100, range));
+	}
+
+	public static void setNearestRange(int blocks) {
+		SettingsRepository.get().nearestRange = Math.max(1, Math.min(100, blocks));
+		SettingsRepository.save();
+	}
+
+	/** Blocks in front of the player (0..2) where a new strategy label is placed. */
+	public static int getLabelForward() {
+		return Math.max(0, Math.min(2, SettingsRepository.get().labelForward));
+	}
+
+	public static void setLabelForward(int blocks) {
+		SettingsRepository.get().labelForward = Math.max(0, Math.min(2, blocks));
+		SettingsRepository.save();
+	}
+
+	/** Blocks above the player's feet block (0..2) where a new strategy label is placed. */
 	public static int getLabelUp() {
-		return Math.max(0, Math.min(5, SettingsRepository.get().labelUp));
+		return Math.max(0, Math.min(2, SettingsRepository.get().labelUp));
 	}
 
 	public static void setLabelUp(int blocks) {
-		SettingsRepository.get().labelUp = Math.max(0, Math.min(5, blocks));
+		SettingsRepository.get().labelUp = Math.max(0, Math.min(2, blocks));
 		SettingsRepository.save();
 	}
 

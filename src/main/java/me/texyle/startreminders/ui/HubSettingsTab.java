@@ -33,9 +33,12 @@ final class HubSettingsTab implements HubTab {
     private static final int PREVIEW_H = 130;
     private static final int WRAP_WIDTH = 500;
     private static final int SCROLL_STEP = 20;
-    private static final int CELL = 20;
-    private static final int CHART = 6 * CELL;
+    /** The chart is 3x3 blocks; the player stands in the bottom left one. */
+    private static final int GRID = 3;
+    private static final int CELL = 40;
+    private static final int CHART = GRID * CELL;
     private static final int LABEL_CARD_H = 24 + CHART + 10;
+    private static final int CROSSHAIR_CARD_H = 24 + 34;
 
     private int x;
     private int y;
@@ -62,7 +65,10 @@ final class HubSettingsTab implements HubTab {
     private final UiSegmented sectionsMode;
     private final UiSegmented showKeyMode;
     private final UiToggle chatMessages;
+    private final UiSlider crosshairRange;
+    private final UiSlider nearestRange;
     private int labelTop;
+    private int crosshairTop;
     private int chartX;
     private int chartY;
     private boolean chartDragging;
@@ -98,6 +104,16 @@ final class HubSettingsTab implements HubTab {
                 on -> UserPreferences.setChatMessagesEnabled(on.booleanValue()));
         widgets.add(chatMessages);
 
+        crosshairRange = new UiSlider(1, 100, UserPreferences.getCrosshairRange(), " blocks",
+                UserPreferences::setCrosshairRange);
+        crosshairRange.w = 240;
+        widgets.add(crosshairRange);
+
+        nearestRange = new UiSlider(1, 100, UserPreferences.getNearestRange(), " blocks",
+                UserPreferences::setNearestRange);
+        nearestRange.w = 240;
+        widgets.add(nearestRange);
+
         widgets.add(pickMode);
         widgets.add(sectionsMode);
         widgets.add(showKeyMode);
@@ -120,7 +136,7 @@ final class HubSettingsTab implements HubTab {
                 : DISPLAY_CARD_H + CARD_GAP + BEHAVIOR_CARD_H;
 
         int baseH = fullH;
-        fullH += CARD_GAP + LABEL_CARD_H;
+        fullH += CARD_GAP + LABEL_CARD_H + CARD_GAP + CROSSHAIR_CARD_H;
 
         boolean scrolls = fullH > h;
         contentW = scrolls ? w - VerticalScrollbar.WIDTH - 6 : w;
@@ -147,6 +163,7 @@ final class HubSettingsTab implements HubTab {
         labelTop = top + baseH + CARD_GAP;
         chartX = x + UiTheme.PADDING;
         chartY = labelTop + 24;
+        crosshairTop = labelTop + LABEL_CARD_H + CARD_GAP;
 
         int right = x + leftW - UiTheme.PADDING;
 
@@ -171,6 +188,15 @@ final class HubSettingsTab implements HubTab {
         showKeyMode.y = behaviorTop + 24 + 68 + 8;
         chatMessages.x = right - chatMessages.w;
         chatMessages.y = behaviorTop + 24 + 102 + 9;
+        crosshairRange.x = x + contentW - UiTheme.PADDING - crosshairRange.w;
+        crosshairRange.y = crosshairTop + 24 + 9;
+        nearestRange.x = crosshairRange.x;
+        nearestRange.y = crosshairRange.y;
+
+        // Only the range of the chosen mode is shown (and clickable).
+        boolean crosshair = UserPreferences.isEditPickModeInCrosshair();
+        crosshairRange.visible = crosshair;
+        nearestRange.visible = !crosshair;
     }
 
     @Override
@@ -209,13 +235,19 @@ final class HubSettingsTab implements HubTab {
                 UserPreferences.isShowKeyToggle() ? "Press to switch on and off" : "Shown while the key is held");
 
         for (UiWidget widget : widgets) {
-            widget.draw(mouseX, mouseY);
+            if (widget != crosshairRange && widget != nearestRange) widget.draw(mouseX, mouseY);
         }
 
         drawPreview();
 
         UiDraw.card(x, labelTop, contentW, LABEL_CARD_H, "Strategy position");
         drawLabelChart();
+
+        UiDraw.card(x, crosshairTop, contentW, CROSSHAIR_CARD_H,
+                UserPreferences.isEditPickModeInCrosshair() ? "Crosshair mode" : "Nearest mode");
+        row(labelX, crosshairTop + 24, "Range", "How far the edit key looks for a jump:");
+        crosshairRange.draw(mouseX, mouseY);
+        nearestRange.draw(mouseX, mouseY);
 
         GuiScissor.disable();
 
@@ -233,7 +265,7 @@ final class HubSettingsTab implements HubTab {
         int up = UserPreferences.getLabelUp();
 
         UiDraw.fill(chartX, chartY, CHART, CHART, 0xFF262C38);
-        for (int i = 0; i <= 6; i++) {
+        for (int i = 0; i <= GRID; i++) {
             UiDraw.fill(chartX + i * CELL, chartY, 1, CHART, UiTheme.CARD_BORDER);
             UiDraw.fill(chartX, chartY + i * CELL, CHART, 1, UiTheme.CARD_BORDER);
         }
@@ -272,8 +304,8 @@ final class HubSettingsTab implements HubTab {
 
     /** A click or drag on the chart puts the label block under the mouse. */
     private void setFromChart(int mouseX, int mouseY) {
-        int forward = Math.max(0, Math.min(5, (mouseX - chartX) / CELL));
-        int up = Math.max(0, Math.min(5, 5 - (mouseY - chartY) / CELL));
+        int forward = Math.max(0, Math.min(GRID - 1, (mouseX - chartX) / CELL));
+        int up = Math.max(0, Math.min(GRID - 1, GRID - 1 - (mouseY - chartY) / CELL));
         if (mouseX < chartX) forward = 0;
         if (mouseY >= chartY + CHART) up = 0;
 

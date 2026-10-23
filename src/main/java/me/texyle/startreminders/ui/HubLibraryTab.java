@@ -4,6 +4,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Gui;
+import net.minecraft.client.renderer.GlStateManager;
+import net.minecraft.util.ResourceLocation;
+
 import me.texyle.startreminders.data.ParkourMap;
 import me.texyle.startreminders.data.ServerProfile;
 import me.texyle.startreminders.gui.hierarchy.GuiConfirm;
@@ -11,6 +16,7 @@ import me.texyle.startreminders.gui.hierarchy.GuiCreateMap;
 import me.texyle.startreminders.gui.hierarchy.GuiEditMap;
 import me.texyle.startreminders.gui.hierarchy.GuiTextPrompt;
 import me.texyle.startreminders.persistence.BuiltinContainers;
+import me.texyle.startreminders.persistence.DataStoreRepository;
 import me.texyle.startreminders.reminders.SelectionState;
 import me.texyle.startreminders.services.MapService;
 import me.texyle.startreminders.services.ServerService;
@@ -40,6 +46,14 @@ final class HubLibraryTab implements HubTab {
     private final UiButton newMapButton;
     private final UiButton mapMenuButton;
     private final List<UiWidget> widgets = new ArrayList<UiWidget>();
+
+    /** The light bulbs drawn in the map list this frame (x, y, map), so a click on one can be told from a row click. */
+    private final List<Object[]> bulbs = new ArrayList<Object[]>();
+
+    private static final ResourceLocation BULB_ON = new ResourceLocation("sr", "textures/bulb_on.png");
+    private static final ResourceLocation BULB_OFF = new ResourceLocation("sr", "textures/bulb_off.png");
+    private static final int BULB_SIZE = 14;
+    private static final int BULB_COLUMN_W = 24;
 
     private int x;
     private int y;
@@ -185,6 +199,7 @@ final class HubLibraryTab implements HubTab {
             UiDraw.text("MAPS", mapList.x, y + 7, UiTheme.TEXT_MUTED);
         }
 
+        bulbs.clear();
         for (UiWidget widget : widgets) {
             widget.draw(mouseX, mouseY);
         }
@@ -239,14 +254,46 @@ final class HubLibraryTab implements HubTab {
         int tagW = tag.isEmpty() ? 0 : UiDraw.width(tag) + 12;
 
         int special = SpecialColors.of(m);
-        UiDraw.text(UiDraw.fit(String.valueOf(m.getId()), rw - 14 - tagW), rx + 8, textY, special != 0 ? special : UiTheme.TEXT);
+        int nameColor = special != 0 ? special : UiTheme.TEXT;
+        if (!m.isVisibleInGame()) nameColor = UiTheme.TEXT_DISABLED;
+
+        drawBulb(rx + 8, ry + (rh - BULB_SIZE) / 2, m.isVisibleInGame());
+        bulbs.add(new Object[] { Integer.valueOf(rx), Integer.valueOf(ry), Integer.valueOf(rh), m });
+
+        UiDraw.text(UiDraw.fit(String.valueOf(m.getId()), rw - 14 - BULB_COLUMN_W - tagW), rx + 8 + BULB_COLUMN_W, textY, nameColor);
         if (!tag.isEmpty()) {
             UiDraw.text(tag, rx + rw - tagW, textY, selected ? UiTheme.TEXT : UiTheme.TEXT_MUTED);
         }
     }
 
+    /** A small light bulb: lit when the map is on in the game. */
+    private static void drawBulb(int bx, int by, boolean lit) {
+        Minecraft.getMinecraft().getTextureManager().bindTexture(lit ? BULB_ON : BULB_OFF);
+        GlStateManager.enableBlend();
+        GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0);
+        GlStateManager.color(1f, 1f, 1f, 1f);
+        Gui.drawScaledCustomSizeModalRect(bx, by, 0, 0, 16, 16, BULB_SIZE, BULB_SIZE, 16, 16);
+        GlStateManager.disableBlend();
+    }
+
+    private void toggleVisible(ParkourMap map) {
+        map.setVisibleInGame(!map.isVisibleInGame());
+        DataStoreRepository.save();
+    }
+
     @Override
     public boolean mouseClicked(int mouseX, int mouseY, int button) {
+        if (button == 0 && UiDraw.inside(mouseX, mouseY, mapList.x, mapList.y + 1, mapList.w, mapList.h - 2)) {
+            for (Object[] b : bulbs) {
+                int rx = ((Integer) b[0]).intValue();
+                int ry = ((Integer) b[1]).intValue();
+                int rh = ((Integer) b[2]).intValue();
+                if (UiDraw.inside(mouseX, mouseY, rx + 4, ry, BULB_COLUMN_W, rh)) {
+                    toggleVisible((ParkourMap) b[3]);
+                    return true;
+                }
+            }
+        }
         for (int i = widgets.size() - 1; i >= 0; i--) {
             if (widgets.get(i).mouseClicked(mouseX, mouseY, button)) {
                 return true;
@@ -337,6 +384,7 @@ final class HubLibraryTab implements HubTab {
         if (map != null) {
             entries.add(new Entry("Template mode", editable, map.isTemplateMode(), true,
                     () -> TemplateMode.setEnabled(map, !map.isTemplateMode())));
+            entries.add(new Entry("Visible in game", true, map.isVisibleInGame(), false, () -> toggleVisible(map)));
             entries.add(Entry.item("Edit map...", editable, () -> hub.open(new GuiEditMap(hub, server, map))));
             entries.add(Entry.afterSeparator("Link sheet...", editable, () -> linkSheet(server, map)));
             entries.add(Entry.item("Sync now", editable && map.hasSheetConfigured(),

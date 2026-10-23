@@ -3,6 +3,7 @@ package me.texyle.startreminders.ui;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import net.minecraft.client.Minecraft;
@@ -12,6 +13,7 @@ import net.minecraft.util.MathHelper;
 import org.lwjgl.input.Mouse;
 
 import me.texyle.startreminders.data.Jump;
+import me.texyle.startreminders.data.MapSection;
 import me.texyle.startreminders.data.ParkourMap;
 import me.texyle.startreminders.gui.StrategyFormat;
 import me.texyle.startreminders.input.TapRecorder;
@@ -27,6 +29,7 @@ import me.texyle.startreminders.template.TemplateMode;
 import me.texyle.startreminders.ui.UiPopup.Entry;
 import me.texyle.startreminders.utils.ChatUtils;
 import me.texyle.startreminders.utils.PlayerBlockPos;
+import me.texyle.startreminders.utils.RepeatMarker;
 
 /**
  * Creates a strategy for the selected jump, or edits the strategies it already has.
@@ -97,7 +100,7 @@ public class GuiStrategyEditor extends UiScreen {
                 return null;
             }
         } else if (SelectionState.getSelectedJump() == null) {
-            JumpPicker.selectNearestJumpToPlayer();
+            JumpPicker.selectNearestJumpToPlayer(UserPreferences.getNearestRange());
         }
 
         if (StrategyService.getReminderList().isEmpty()) {
@@ -129,11 +132,14 @@ public class GuiStrategyEditor extends UiScreen {
 
     private static boolean pickJumpForKeybind() {
         if (!UserPreferences.isEditPickModeInCrosshair()) {
-            JumpPicker.selectNearestJumpToPlayer();
-            return SelectionState.getSelectedJump() != null;
+            if (JumpPicker.selectNearestJumpToPlayer(UserPreferences.getNearestRange()) == null) {
+                ChatUtils.warning("No strategies in reachable range.");
+                return false;
+            }
+            return true;
         }
 
-        Jump picked = JumpPicker.selectJumpInCrosshair(50.0D, 1.75D);
+        Jump picked = JumpPicker.selectJumpInCrosshair(UserPreferences.getCrosshairRange());
         if (picked == null) {
             // Do NOT fall back to nearest: the user asked for the crosshair.
             ChatUtils.warning("No strategies in visible range.");
@@ -203,8 +209,17 @@ public class GuiStrategyEditor extends UiScreen {
 
         // Jump name (read-only) is drawn in drawContent at this row.
         if (TemplateMode.isEditing()) {
-            add(new UiDropdown(popup, "", TemplateMode::navTargetName, this::navLevelEntries),
-                    fieldX, rowY, fieldW - NAV_ARROWS_W - 4, fieldH);
+            // Two fields: what to move by (Jump or a section level) and which one of those to go to.
+            int levelW = (fieldW - NAV_ARROWS_W - 8) / 2;
+            int targetW = levelW;
+            add(new UiDropdown(popup, "", this::navLevelName, this::navLevelEntries), fieldX, rowY, levelW, fieldH);
+            add(new UiDropdown(popup, "", TemplateMode::navTargetName, this::navTargetEntries),
+                    fieldX + levelW + 4, rowY, targetW, fieldH);
+            if (previewW > 0) {
+                // Under the preview: which section level is written under the crosshair in the game.
+                add(new UiDropdown(popup, "", this::indicatorName, this::indicatorEntries),
+                        previewX, contentY + Math.min(contentH, 200) + 8 + 16, previewW, fieldH);
+            }
             add(new UiButton("<", UiButton.Style.SECONDARY, () -> navigate(-1)), fieldX + fieldW - NAV_ARROWS_W, rowY, 30, fieldH);
             add(new UiButton(">", UiButton.Style.SECONDARY, () -> navigate(1)), fieldX + fieldW - 30, rowY, 30, fieldH);
         }
@@ -234,7 +249,9 @@ public class GuiStrategyEditor extends UiScreen {
         fields = new UiTextField[labels.length];
         for (int i = 0; i < labels.length; i++) {
             int max = restored ? 160 : NEW_MAX_LENGTH[i];
-            fields[i] = add(new UiTextField(draft != null ? draft[i] : "", max), fieldX, rowY, fieldW, fieldH);
+            final int field = i;
+            fields[i] = add(new UiTextField(draft != null ? draft[i] : "", max).onChange(text -> resolveTyped(field)),
+                    fieldX, rowY, fieldW, fieldH);
             if (i == 0 && !restored) {
                 // ">" right of the POSITION label: fills the field with where the player stands.
                 add(new FieldArrow(this::fillPosition), contentX + UiDraw.width("POSITION") + 5, rowY, 12, fieldH);
@@ -514,6 +531,57 @@ public class GuiStrategyEditor extends UiScreen {
         Minecraft.getMinecraft().displayGuiScreen(next);
     }
 
+    /** A "^" typed into a field turns into the value of the field above right away, without waiting for Save. */
+    private void resolveTyped(int field) {
+        if (restored) return;
+
+        String text = fields[field].getText();
+        if (text.indexOf('^') < 0) return;
+
+        List<String> above = strategyAbove();
+        String replaced = RepeatMarker.resolveTyped(text, field < above.size() ? above.get(field) : "");
+        if (!replaced.equals(text)) {
+            fields[field].setText(replaced);
+        }
+    }
+
+    /** The field text, with a "^" replaced by what the strategy above holds in the same field. */
+    private String resolved(int field) {
+        String text = trimmed(field);
+        if (text.indexOf('^') < 0) return text;
+
+        List<String> above = strategyAbove();
+        return RepeatMarker.resolve(text, field < above.size() ? above.get(field) : "");
+    }
+
+    /** The lines of the strategy right above this one in the table, or an empty list if there is none. */
+    private List<String> strategyAbove() {
+        Jump jump = SelectionState.getSelectedJump();
+        if (jump == null) return new ArrayList<String>();
+
+        // The position this strategy has in its jump: where it is, or the end for a new one.
+        ArrayList<Reminder> own = jump.getReminders();
+        int size = own != null ? own.size() : 0;
+        int position = editMode ? index : size;
+        if (position > 0 && position - 1 < size) {
+            return own.get(position - 1).lines;
+        }
+
+        // The first strategy of a jump: the last one of the jump above.
+        ParkourMap map = SelectionState.getSelectedMap();
+        if (map != null && map.getJumps() != null) {
+            List<Jump> jumps = map.getJumps();
+            int at = jumps.indexOf(jump);
+            for (int k = at - 1; k >= 0; k--) {
+                ArrayList<Reminder> previous = jumps.get(k).getReminders();
+                if (previous != null && !previous.isEmpty()) {
+                    return previous.get(previous.size() - 1).lines;
+                }
+            }
+        }
+        return new ArrayList<String>();
+    }
+
     private void saveLegacyStrategy(int x, int y, int z) {
         ParkourMap map = SelectionState.getSelectedMap();
         if (map == null) {
@@ -548,7 +616,7 @@ public class GuiStrategyEditor extends UiScreen {
         }
 
         ArrayList<String> lines = new ArrayList<String>();
-        for (int i = 0; i < 8; i++) lines.add(trimmed(i));
+        for (int i = 0; i < 8; i++) lines.add(resolved(i));
 
         StrategyService.createReminder(lines, x, y, z);
     }
@@ -564,7 +632,7 @@ public class GuiStrategyEditor extends UiScreen {
         } else {
             // New format: [Position, Facing, Setup, Strategy, Strafe, Turn, Author, Tips]
             out = new ArrayList<String>();
-            for (int i = 0; i < 8; i++) out.add(trimmed(i));
+            for (int i = 0; i < 8; i++) out.add(resolved(i));
         }
         reminder.lines = out;
 
@@ -635,6 +703,9 @@ public class GuiStrategyEditor extends UiScreen {
 
         if (previewW > 0) {
             drawPreview(jump);
+            if (TemplateMode.isEditing()) {
+                UiDraw.text("SECTION INDICATOR", previewX, contentY + Math.min(contentH, 200) + 8 + 4, UiTheme.TEXT_MUTED);
+            }
         }
 
     }
@@ -655,6 +726,81 @@ public class GuiStrategyEditor extends UiScreen {
                     () -> TemplateMode.setNavLevel(chosen)));
         }
         return entries;
+    }
+
+    /** The section level shown under the crosshair in the game; until one is chosen, the innermost level of the map. */
+    private static int indicatorLevel(ParkourMap map) {
+        int level = UserPreferences.getSectionIndicatorLevel();
+        return level != 0 ? level : (map != null ? map.getMaxSectionLevelsAllowed() : 0);
+    }
+
+    private String indicatorName() {
+        ParkourMap map = TemplateMode.map();
+        int level = indicatorLevel(map);
+        return (level == 0 || map == null) ? "-" : map.getSectionName(level - 1);
+    }
+
+    private List<Entry> indicatorEntries() {
+        List<Entry> entries = new ArrayList<Entry>();
+        ParkourMap map = TemplateMode.map();
+        int current = indicatorLevel(map);
+        int levels = map != null ? map.getMaxSectionLevelsAllowed() : 0;
+        for (int level = 1; level <= levels; level++) {
+            final int chosen = level;
+            entries.add(Entry.choice(map.getSectionName(level - 1), current == level,
+                    () -> UserPreferences.setSectionIndicatorLevel(chosen)));
+        }
+        return entries;
+    }
+
+    /** "Jump", or the name of the section level the navigation moves by. */
+    private String navLevelName() {
+        int level = TemplateMode.getNavLevel();
+        ParkourMap map = TemplateMode.map();
+        return (level == 0 || map == null) ? "Jump" : map.getSectionName(level - 1);
+    }
+
+    /** Everything of the chosen level: all jumps of the map, or all its sections of that level. */
+    private List<Entry> navTargetEntries() {
+        List<Entry> entries = new ArrayList<Entry>();
+        ParkourMap map = TemplateMode.map();
+        if (map == null || map.getJumps() == null) return entries;
+
+        final List<Jump> jumps = map.getJumps();
+        int currentIndex = TemplateMode.currentIndex();
+        int level = TemplateMode.getNavLevel();
+
+        if (level == 0) {
+            for (int i = 0; i < jumps.size(); i++) {
+                final Jump jump = jumps.get(i);
+                if (jump == null) continue;
+                entries.add(Entry.choice(jump.getId() != null ? jump.getId() : "?", i == currentIndex,
+                        () -> goToJump(jump)));
+            }
+            return entries;
+        }
+
+        List<MapSection> sections = new ArrayList<MapSection>();
+        for (MapSection s : map.getSectionsForLevel(level)) {
+            if (s != null && s.getStartJumpIndex() <= s.getEndJumpIndex()
+                    && s.getStartJumpIndex() >= 0 && s.getStartJumpIndex() < jumps.size()) {
+                sections.add(s);
+            }
+        }
+        Collections.sort(sections, (a, b) -> Integer.compare(a.getStartJumpIndex(), b.getStartJumpIndex()));
+        for (final MapSection s : sections) {
+            boolean here = currentIndex >= s.getStartJumpIndex() && currentIndex <= s.getEndJumpIndex();
+            entries.add(Entry.choice(s.getName(), here, () -> goToJump(jumps.get(s.getStartJumpIndex()))));
+        }
+        return entries;
+    }
+
+    private void goToJump(Jump jump) {
+        TemplateMode.setCurrent(jump);
+        GuiScreen next = openForTemplate(parent, after);
+        if (next != null) {
+            Minecraft.getMinecraft().displayGuiScreen(next);
+        }
     }
 
     /** Moves the template's current jump by a jump or a section and reopens the editor on it. */
@@ -680,25 +826,17 @@ public class GuiStrategyEditor extends UiScreen {
         return "x" + fraction(player.posX, 3) + " z" + fraction(player.posZ, 3);
     }
 
+    /** Adds the player's position to POSITION: after what is already written ("back right, x.323 z.120"). */
     private void fillPosition() {
-        final String position = positionText();
+        String position = positionText();
         if (position.isEmpty()) return;
 
-        if (fields[0].getText().trim().isEmpty()) {
+        String current = fields[0].getText().trim();
+        if (current.isEmpty()) {
             fields[0].setText(position);
-            return;
+        } else {
+            fields[0].setText(current + (current.endsWith(",") ? " " : ", ") + position);
         }
-
-        Minecraft.getMinecraft().displayGuiScreen(new GuiConfirm(this, "Overwrite position",
-                "POSITION is not empty. Overwrite it?", new GuiConfirm.IConfirmHandler() {
-                    @Override
-                    public void onYes() {
-                        fields[0].setText(position);
-                    }
-
-                    @Override
-                    public void onNo() { }
-                }));
     }
 
     private void recordSetup() {

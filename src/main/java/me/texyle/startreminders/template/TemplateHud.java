@@ -31,7 +31,7 @@ public class TemplateHud {
 
         int count = TemplateMode.map().getJumps().size();
         String position = (TemplateMode.currentIndex() + 1) + "/" + count;
-        String section = TemplateMode.sectionName(TemplateMode.map(), TemplateMode.currentIndex());
+        String section = TemplateMode.indicatorSectionName(TemplateMode.map(), TemplateMode.currentIndex());
         String line = section.isEmpty() ? position : position + "  " + section;
         font.drawStringWithShadow(line, cx - font.getStringWidth(line) / 2f, y, SECTION_COLOR);
         y += font.FONT_HEIGHT + 2;
