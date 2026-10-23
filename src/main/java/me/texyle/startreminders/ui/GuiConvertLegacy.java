@@ -23,7 +23,7 @@ import me.texyle.startreminders.utils.ChatUtils;
 public class GuiConvertLegacy extends UiScreen {
 
     private static final String[] NEW_LABELS = { "Position", "Facing", "Setup", "Strategy", "Strafe", "Turn", "Author", "Tips" };
-    private static final int[] NEW_MAX_LENGTH = { 80, 80, 80, 80, 80, 80, 80, 160 };
+    private static final int[] NEW_MAX_LENGTH = { 80, 80, 80, 80, 80, 80, 80, 500 };
 
     private static final int LABEL_W = 62;
 

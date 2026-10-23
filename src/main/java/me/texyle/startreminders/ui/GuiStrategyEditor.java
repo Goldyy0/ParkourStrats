@@ -40,7 +40,7 @@ import me.texyle.startreminders.utils.RepeatMarker;
 public class GuiStrategyEditor extends UiScreen {
 
     private static final String[] NEW_LABELS = { "Position", "Facing", "Setup", "Strategy", "Strafe", "Turn", "Author", "Tips" };
-    private static final int[] NEW_MAX_LENGTH = { 80, 80, 80, 80, 80, 80, 80, 160 };
+    private static final int[] NEW_MAX_LENGTH = { 80, 80, 80, 80, 80, 80, 80, 500 };
     private static final String[] LEGACY_LABELS = { "Line 1", "Line 2", "Line 3", "Line 4", "Line 5" };
 
     private static final int LABEL_W = 72;
