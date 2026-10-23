@@ -11,7 +11,9 @@ import me.texyle.startreminders.data.Jump;
 /** In template mode: the innermost section and the current jump, written under the crosshair. */
 public class TemplateHud {
 
-    private static final int SECTION_COLOR = 0xFFB59CF0;
+    private static final int COUNTER_COLOR = 0xFFB59CF0;
+    /** A darker purple than the counter. */
+    private static final int SECTION_COLOR = 0xFF8660D8;
     private static final int JUMP_COLOR = 0xFFFFFFFF;
 
     @SubscribeEvent
@@ -32,8 +34,10 @@ public class TemplateHud {
         int count = TemplateMode.map().getJumps().size();
         String position = (TemplateMode.currentIndex() + 1) + "/" + count;
         String section = TemplateMode.indicatorSectionName(TemplateMode.map(), TemplateMode.currentIndex());
-        String line = section.isEmpty() ? position : position + "  " + section;
-        font.drawStringWithShadow(line, cx - font.getStringWidth(line) / 2f, y, SECTION_COLOR);
+        String gap = section.isEmpty() ? "" : "  ";
+        float left = cx - font.getStringWidth(position + gap + section) / 2f;
+        font.drawStringWithShadow(position, left, y, COUNTER_COLOR);
+        font.drawStringWithShadow(section, left + font.getStringWidth(position + gap), y, SECTION_COLOR);
         y += font.FONT_HEIGHT + 2;
 
         String name = jump.getId() != null ? jump.getId() : "";

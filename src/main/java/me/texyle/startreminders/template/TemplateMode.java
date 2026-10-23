@@ -207,6 +207,31 @@ public final class TemplateMode {
         }
     }
 
+    /**
+     * Moves on from the current jump to the next one in the row that has no position yet (wrapping around). When
+     * all of them are placed, to the very next jump; the last jump stays where it is.
+     */
+    public static void advance() {
+        ParkourMap map = map();
+        Jump jump = current();
+        if (map == null || jump == null) return;
+
+        List<Jump> jumps = map.getJumps();
+        int at = indexOf(jumps, jump);
+        int n = jumps.size();
+
+        for (int k = 1; k < n; k++) {
+            Jump candidate = jumps.get((at + k) % n);
+            if (candidate != null && !isPlaced(candidate)) {
+                setCurrent(candidate);
+                return;
+            }
+        }
+        if (at + 1 < n) {
+            setCurrent(jumps.get(at + 1));
+        }
+    }
+
     // -------------------------
     // Sections
     // -------------------------

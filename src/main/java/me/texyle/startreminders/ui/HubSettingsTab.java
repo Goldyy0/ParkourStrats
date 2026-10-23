@@ -16,6 +16,7 @@ import net.minecraft.client.resources.DefaultPlayerSkin;
 import net.minecraft.util.ResourceLocation;
 
 import me.texyle.startreminders.StratReminders;
+import me.texyle.startreminders.gui.hierarchy.GuiConfirm;
 import me.texyle.startreminders.gui.GuiDraw;
 import me.texyle.startreminders.gui.GuiScissor;
 import me.texyle.startreminders.reminders.UserPreferences;
@@ -39,6 +40,8 @@ final class HubSettingsTab implements HubTab {
     private static final int CHART = GRID * CELL;
     private static final int LABEL_CARD_H = 24 + CHART + 10;
     private static final int CROSSHAIR_CARD_H = 24 + 34;
+    private static final int DISTANCE_CARD_H = 24 + 34;
+    private static final int RESET_H = 24;
 
     private int x;
     private int y;
@@ -67,6 +70,9 @@ final class HubSettingsTab implements HubTab {
     private final UiToggle chatMessages;
     private final UiSlider crosshairRange;
     private final UiSlider nearestRange;
+    private final UiSlider labelRange;
+    private final UiButton resetButton;
+    private int distanceTop;
     private int labelTop;
     private int crosshairTop;
     private int chartX;
@@ -75,7 +81,11 @@ final class HubSettingsTab implements HubTab {
 
     private final List<UiWidget> widgets = new ArrayList<UiWidget>();
 
-    HubSettingsTab() {
+    private final GuiHub hub;
+
+    HubSettingsTab(GuiHub hub) {
+        this.hub = hub;
+
         showJumpName = new UiToggle(UserPreferences.isGlobalShowJumpNameEnabled(),
                 on -> UserPreferences.setGlobalShowJumpNameEnabled(on.booleanValue()));
 
@@ -114,6 +124,16 @@ final class HubSettingsTab implements HubTab {
         nearestRange.w = 240;
         widgets.add(nearestRange);
 
+        labelRange = new UiSlider(1, 50, UserPreferences.getLabelRange(), " blocks",
+                UserPreferences::setLabelRange);
+        labelRange.w = 240;
+        widgets.add(labelRange);
+
+        resetButton = new UiButton("Reset to Default", UiButton.Style.DANGER, this::confirmReset);
+        resetButton.w = resetButton.preferredWidth();
+        resetButton.h = RESET_H;
+        widgets.add(resetButton);
+
         widgets.add(pickMode);
         widgets.add(sectionsMode);
         widgets.add(showKeyMode);
@@ -136,7 +156,7 @@ final class HubSettingsTab implements HubTab {
                 : DISPLAY_CARD_H + CARD_GAP + BEHAVIOR_CARD_H;
 
         int baseH = fullH;
-        fullH += CARD_GAP + LABEL_CARD_H + CARD_GAP + CROSSHAIR_CARD_H;
+        fullH += CARD_GAP + LABEL_CARD_H + CARD_GAP + CROSSHAIR_CARD_H + CARD_GAP + DISTANCE_CARD_H + CARD_GAP + RESET_H;
 
         boolean scrolls = fullH > h;
         contentW = scrolls ? w - VerticalScrollbar.WIDTH - 6 : w;
@@ -164,6 +184,7 @@ final class HubSettingsTab implements HubTab {
         chartX = x + UiTheme.PADDING;
         chartY = labelTop + 24;
         crosshairTop = labelTop + LABEL_CARD_H + CARD_GAP;
+        distanceTop = crosshairTop + CROSSHAIR_CARD_H + CARD_GAP;
 
         int right = x + leftW - UiTheme.PADDING;
 
@@ -192,11 +213,44 @@ final class HubSettingsTab implements HubTab {
         crosshairRange.y = crosshairTop + 24 + 9;
         nearestRange.x = crosshairRange.x;
         nearestRange.y = crosshairRange.y;
+        labelRange.x = crosshairRange.x;
+        labelRange.y = distanceTop + 24 + 9;
+        resetButton.x = x;
+        resetButton.y = distanceTop + DISTANCE_CARD_H + CARD_GAP;
 
         // Only the range of the chosen mode is shown (and clickable).
         boolean crosshair = UserPreferences.isEditPickModeInCrosshair();
         crosshairRange.visible = crosshair;
         nearestRange.visible = !crosshair;
+    }
+
+    private void confirmReset() {
+        hub.open(new GuiConfirm(hub, "Reset to Default", "Reset all settings to their defaults?",
+                new GuiConfirm.IConfirmHandler() {
+                    @Override
+                    public void onYes() {
+                        resetToDefaults();
+                    }
+
+                    @Override
+                    public void onNo() { }
+                }));
+    }
+
+    /** Every option back to its default, and the controls follow. */
+    private void resetToDefaults() {
+        UserPreferences.resetToDefaults();
+
+        showJumpName.setOn(UserPreferences.isGlobalShowJumpNameEnabled());
+        jumpNameColor.setSelectedCode(UserPreferences.getGlobalInWorldJumpNameColor());
+        textColor.setSelectedCode(UserPreferences.getGlobalInWorldTextColor());
+        pickMode.setSelected(UserPreferences.isEditPickModeInCrosshair() ? 1 : 0);
+        sectionsMode.setSelected(UserPreferences.isSectionsCompact() ? 0 : 1);
+        showKeyMode.setSelected(UserPreferences.isShowKeyToggle() ? 0 : 1);
+        chatMessages.setOn(UserPreferences.isChatMessagesEnabled());
+        crosshairRange.setValue(UserPreferences.getCrosshairRange());
+        nearestRange.setValue(UserPreferences.getNearestRange());
+        labelRange.setValue(UserPreferences.getLabelRange());
     }
 
     @Override
@@ -235,7 +289,7 @@ final class HubSettingsTab implements HubTab {
                 UserPreferences.isShowKeyToggle() ? "Press to switch on and off" : "Shown while the key is held");
 
         for (UiWidget widget : widgets) {
-            if (widget != crosshairRange && widget != nearestRange) widget.draw(mouseX, mouseY);
+            if (widget != crosshairRange && widget != nearestRange && widget != labelRange && widget != resetButton) widget.draw(mouseX, mouseY);
         }
 
         drawPreview();
@@ -248,6 +302,11 @@ final class HubSettingsTab implements HubTab {
         row(labelX, crosshairTop + 24, "Range", "How far the edit key looks for a jump:");
         crosshairRange.draw(mouseX, mouseY);
         nearestRange.draw(mouseX, mouseY);
+
+        UiDraw.card(x, distanceTop, contentW, DISTANCE_CARD_H, "Strategy labels");
+        row(labelX, distanceTop + 24, "Label distance", "How far away the labels are drawn:");
+        labelRange.draw(mouseX, mouseY);
+        resetButton.draw(mouseX, mouseY);
 
         GuiScissor.disable();
 

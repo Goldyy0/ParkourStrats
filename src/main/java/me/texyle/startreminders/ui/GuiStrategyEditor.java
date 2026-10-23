@@ -29,6 +29,7 @@ import me.texyle.startreminders.template.TemplateMode;
 import me.texyle.startreminders.ui.UiPopup.Entry;
 import me.texyle.startreminders.utils.ChatUtils;
 import me.texyle.startreminders.utils.PlayerBlockPos;
+import me.texyle.startreminders.utils.FacingAxis;
 import me.texyle.startreminders.utils.RepeatMarker;
 
 /**
@@ -111,11 +112,19 @@ public class GuiStrategyEditor extends UiScreen {
     }
 
     /**
-     * Template mode: the editor for the map's current jump, opened from the edit key.
+     * Template mode: the editor for the jump of the map the player aims at, or else for the map's current jump,
+     * opened from the edit key.
      *
      * @return the screen to show, or null if the map has no jumps
      */
     public static GuiScreen forTemplate() {
+        // The jump under the crosshair first (whatever the edit key target setting says, and silently); when there is
+        // none, the current jump (the one the section indicator names).
+        Jump aimed = JumpPicker.selectJumpInCrosshair(UserPreferences.getCrosshairRange(), TemplateMode.map());
+        if (aimed != null) {
+            TemplateMode.setCurrent(aimed);
+            return new GuiStrategyEditor(null, null, !StrategyService.getReminderList().isEmpty());
+        }
         return openForTemplate(null, null);
     }
 
@@ -238,6 +247,8 @@ public class GuiStrategyEditor extends UiScreen {
         coordX = add(new UiTextField(draftCoords != null ? draftCoords[0] : "0", 12), fieldX, rowY, third, fieldH);
         coordY = add(new UiTextField(draftCoords != null ? draftCoords[1] : "0", 12), fieldX + third + 4, rowY, third, fieldH);
         coordZ = add(new UiTextField(draftCoords != null ? draftCoords[2] : "0", 12), fieldX + (third + 4) * 2, rowY, third, fieldH);
+        // ">" right of the COORDS label: opens the window that moves the label block by block.
+        add(new FieldArrow(this::openLabelMover), contentX + UiDraw.width("COORDS") + 5, rowY, 12, fieldH);
         int positionX = fieldX + (third + 4) * 3;
         add(new UiButton("My position", UiButton.Style.SECONDARY, this::useMyPosition),
                 positionX, rowY, fieldX + fieldW - positionX, fieldH);
@@ -328,6 +339,19 @@ public class GuiStrategyEditor extends UiScreen {
         coordX.setText(Integer.toString(sx));
         coordY.setText(Integer.toString(sy));
         coordZ.setText(Integer.toString(sz));
+    }
+
+    private void openLabelMover() {
+        if (!coordinatesValid()) return;
+
+        int x = Integer.parseInt(coordX.getText().trim());
+        int y = Integer.parseInt(coordY.getText().trim());
+        int z = Integer.parseInt(coordZ.getText().trim());
+        Minecraft.getMinecraft().displayGuiScreen(new GuiMoveLabel(this, x, y, z, moved -> {
+            coordX.setText(Integer.toString(moved[0]));
+            coordY.setText(Integer.toString(moved[1]));
+            coordZ.setText(Integer.toString(moved[2]));
+        }));
     }
 
     private void useMyPosition() {
@@ -527,6 +551,10 @@ public class GuiStrategyEditor extends UiScreen {
             GuiStrategyEditor editor = new GuiStrategyEditor(parent, after, true);
             if (!editor.reminders.isEmpty()) editor.index = editor.reminders.size() - 1;
             next = editor;
+        } else if (parent == null && TemplateMode.isEditing()) {
+            // Opened by the edit key in template mode: saving moves on to the next jump without a position, so a quick
+            // fix of a jump that was just placed does not leave the template on it.
+            TemplateMode.advance();
         }
         Minecraft.getMinecraft().displayGuiScreen(next);
     }
@@ -917,10 +945,16 @@ public class GuiStrategyEditor extends UiScreen {
             int tx = x;
             int ty = y + (UiTheme.CONTROL_HEIGHT - 8) / 2;
             for (String[] part : parts) {
-                UiDraw.text(part[0], tx, ty, UiTheme.TEXT_MUTED);
+                UiDraw.text(part[0], tx, ty, UiTheme.ACCENT);
                 tx += UiDraw.width(part[0]);
                 UiDraw.text(part[1], tx, ty, UiTheme.TEXT);
-                tx += UiDraw.width(part[1]) + 10;
+                tx += UiDraw.width(part[1]);
+                if (part == parts[parts.length - 1]) {
+                    String axis = " (" + FacingAxis.name(player.rotationYaw) + ")";
+                    UiDraw.text(axis, tx, ty, UiTheme.ACCENT);
+                    tx += UiDraw.width(axis);
+                }
+                tx += 10;
             }
 
             arrowX = tx;

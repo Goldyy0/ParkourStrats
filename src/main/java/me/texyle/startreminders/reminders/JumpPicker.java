@@ -18,6 +18,11 @@ public final class JumpPicker {
 	private JumpPicker() {}
 
 	public static Jump selectJumpInCrosshair(double maxRangeBlocks) {
+		return selectJumpInCrosshair(maxRangeBlocks, null);
+	}
+
+	/** As above, but only the jumps of {@code onlyMap} count (and they count even when the map is hidden in the game). */
+	public static Jump selectJumpInCrosshair(double maxRangeBlocks, ParkourMap onlyMap) {
 		DataStoreRepository.ensureLoaded();
 
 		Minecraft mc = Minecraft.getMinecraft();
@@ -29,19 +34,19 @@ public final class JumpPicker {
 
 		JumpPickResult best = null;
 
-		JumpPickResult g = findBestJumpInCrosshairInStore(DataStoreRepository.getGlobalStore(), player, maxRangeBlocks);
+		JumpPickResult g = findBestJumpInCrosshairInStore(DataStoreRepository.getGlobalStore(), player, maxRangeBlocks, onlyMap);
 		if (g != null && g.jump != null) {
 			best = g;
 		}
 
-		JumpPickResult r = findBestJumpInCrosshairInStore(DataStoreRepository.getRestoredStore(), player, maxRangeBlocks);
+		JumpPickResult r = findBestJumpInCrosshairInStore(DataStoreRepository.getRestoredStore(), player, maxRangeBlocks, onlyMap);
 		if (r != null && r.jump != null) {
 			if (best == null || isCrosshairPickBetter(r, best)) {
 				best = r;
 			}
 		}
 
-		JumpPickResult s = findBestJumpInCrosshairInStore(DataStoreRepository.getSharedStore(), player, maxRangeBlocks);
+		JumpPickResult s = findBestJumpInCrosshairInStore(DataStoreRepository.getSharedStore(), player, maxRangeBlocks, onlyMap);
 		if (s != null && s.jump != null) {
 			if (best == null || isCrosshairPickBetter(s, best)) {
 				best = s;
@@ -83,7 +88,12 @@ public final class JumpPicker {
 
 	/** Only jumps of maps that are on in the game, with a place, strategies and still in the sheet count. */
 	private static boolean isCandidate(ParkourMap map, Jump jump) {
-		if (jump == null || !map.isVisibleInGame() || jump.isSheetMissing()) return false;
+		return isCandidate(map, jump, null);
+	}
+
+	private static boolean isCandidate(ParkourMap map, Jump jump, ParkourMap onlyMap) {
+		if (jump == null || jump.isSheetMissing()) return false;
+		if (onlyMap != null ? map != onlyMap : !map.isVisibleInGame()) return false;
 		if (jump.getX() == 0 && jump.getY() == 0 && jump.getZ() == 0) return false;
 		return jump.getReminders() != null && !jump.getReminders().isEmpty();
 	}
@@ -91,7 +101,8 @@ public final class JumpPicker {
 	private static JumpPickResult findBestJumpInCrosshairInStore(
 			DataStore store,
 			EntityPlayerSP player,
-			double maxRangeBlocks
+			double maxRangeBlocks,
+			ParkourMap onlyMap
 	) {
 		if (store == null || store.getServers() == null || player == null) {
 			return null;
@@ -127,7 +138,7 @@ public final class JumpPicker {
 				if (m == null || m.getJumps() == null) continue;
 
 				for (Jump j : m.getJumps()) {
-					if (!isCandidate(m, j)) continue;
+					if (!isCandidate(m, j, onlyMap)) continue;
 
 					int x = j.getX();
 					int y = j.getY();

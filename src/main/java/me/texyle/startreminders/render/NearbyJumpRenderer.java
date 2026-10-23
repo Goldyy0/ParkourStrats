@@ -24,6 +24,9 @@ public class NearbyJumpRenderer {
 
 	private static boolean toggled = false;
 
+	/** Squared label distance (blocks) of the frame being drawn; set from the Label distance setting. */
+	private static double radiusSq;
+
 	/** The show key went down: flips the display in TOGGLE mode (in HOLD mode the key state is read directly). */
 	public static void onShowKeyPressed() {
 		if (UserPreferences.isShowKeyToggle()) {
@@ -39,11 +42,6 @@ public class NearbyJumpRenderer {
 		return StratReminders.showKey.isKeyDown();
 	}
 
-	// Nearby rendering radius (blocks)
-	private static final double NEARBY_RADIUS_BLOCKS = 24.0D;
-
-	private static final double NEARBY_RADIUS_SQ = NEARBY_RADIUS_BLOCKS * NEARBY_RADIUS_BLOCKS;
-
 	@SubscribeEvent
 	public void onWorldRender(RenderWorldLastEvent event) {
 		DataStoreRepository.ensureLoaded();
@@ -58,6 +56,7 @@ public class NearbyJumpRenderer {
 		}
 
 		EntityPlayerSP player = mc.thePlayer;
+		radiusSq = UserPreferences.getLabelRange() * (double) UserPreferences.getLabelRange();
 
 		// Render all loaded jumps (Global + Restored + Shared) that are nearby.
 		renderNearbyJumps(player, event);
@@ -107,7 +106,7 @@ public class NearbyJumpRenderer {
 					double dz = player.posZ - z;
 					double distSq = (dx * dx) + (dy * dy) + (dz * dz);
 
-					if (distSq > NEARBY_RADIUS_SQ) {
+					if (distSq > radiusSq) {
 						continue;
 					}
 

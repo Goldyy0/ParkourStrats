@@ -6,8 +6,8 @@ public class ModSettings {
     public boolean showJumpNameInWorld = true;
 
     // Global in-world colors (stored as Minecraft formatting codes, e.g. "§b").
-    // Defaults: jump name = aqua (§b), text = white (§f).
-    public String inWorldJumpNameColor = "\u00A7b";
+    // Defaults: jump name = purple (§5), text = white (§f).
+    public String inWorldJumpNameColor = "\u00A75";
     public String inWorldTextColor = "\u00A7f";
 
     // Edit menu jump pick mode:
@@ -37,6 +37,9 @@ public class ModSettings {
 
     // How far (blocks, 1..100) the edit key looks for a jump in "Nearest" mode. Default is 50.
     public int nearestRange = 50;
+
+    // How far (blocks) the strategy labels are drawn in the world.
+    public int labelRange = 15;
 
     // Template mode: which section level the crosshair text shows (0 = the innermost section, 1..5 = that level).
     public int sectionIndicatorLevel = 0;

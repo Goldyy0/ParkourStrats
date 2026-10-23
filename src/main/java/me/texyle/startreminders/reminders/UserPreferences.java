@@ -5,7 +5,7 @@ import me.texyle.startreminders.persistence.SettingsRepository;
 /** Typed access to the user-facing options stored in {@link ModSettings}. */
 public final class UserPreferences {
 
-	private static final String DEFAULT_JUMP_NAME_COLOR = "\u00A7b"; // aqua
+	private static final String DEFAULT_JUMP_NAME_COLOR = "\u00A75"; // purple
 	private static final String DEFAULT_TEXT_COLOR = "\u00A7f"; // white
 
 	private UserPreferences() {}
@@ -58,6 +58,37 @@ public final class UserPreferences {
 
 	public static void setCrosshairRange(int blocks) {
 		SettingsRepository.get().crosshairRange = Math.max(1, Math.min(100, blocks));
+		SettingsRepository.save();
+	}
+
+	/** Puts every option of the Settings tab back to its default (the position readout decimals and the section indicator stay). */
+	public static void resetToDefaults() {
+		ModSettings current = SettingsRepository.get();
+		ModSettings defaults = new ModSettings();
+
+		current.showJumpNameInWorld = defaults.showJumpNameInWorld;
+		current.inWorldJumpNameColor = defaults.inWorldJumpNameColor;
+		current.inWorldTextColor = defaults.inWorldTextColor;
+		current.editPickModeInCrosshair = defaults.editPickModeInCrosshair;
+		current.sectionsCompact = defaults.sectionsCompact;
+		current.showKeyToggle = defaults.showKeyToggle;
+		current.chatMessages = defaults.chatMessages;
+		current.labelForward = defaults.labelForward;
+		current.labelUp = defaults.labelUp;
+		current.crosshairRange = defaults.crosshairRange;
+		current.nearestRange = defaults.nearestRange;
+		current.labelRange = defaults.labelRange;
+		SettingsRepository.save();
+	}
+
+	/** How far (blocks, 1..50) the strategy labels are drawn in the world. */
+	public static int getLabelRange() {
+		int range = SettingsRepository.get().labelRange;
+		return range <= 0 ? 15 : Math.max(1, Math.min(50, range));
+	}
+
+	public static void setLabelRange(int blocks) {
+		SettingsRepository.get().labelRange = Math.max(1, Math.min(50, blocks));
 		SettingsRepository.save();
 	}
 

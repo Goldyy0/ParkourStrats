@@ -28,6 +28,11 @@ public class UiSlider extends UiWidget {
         this.h = 16;
     }
 
+    /** Moves the slider without calling the listener (the setting was changed elsewhere). */
+    public void setValue(int value) {
+        this.value = Math.max(min, Math.min(max, value));
+    }
+
     private int trackX() {
         return x + THUMB_W / 2;
     }

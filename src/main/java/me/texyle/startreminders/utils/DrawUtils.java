@@ -89,11 +89,6 @@ public class DrawUtils {
         double y = blockY - viewerY - viewer.getEyeHeight();
         double z = blockZ + 0.5 - viewerZ;
 
-        double distSq = x * x + y * y + z * z;
-        if (distSq > 144) {
-            return;
-        }
-
         GlStateManager.pushMatrix();
         GlStateManager.translate(x, y, z);
         GlStateManager.translate(0, viewer.getEyeHeight(), 0);

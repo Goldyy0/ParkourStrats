@@ -50,7 +50,7 @@ public class GuiHub extends GuiScreen {
                 new HubStrategiesTab(this, popup),
                 new HubLibraryTab(this, popup),
                 new HubSectionsTab(this, popup),
-                new HubSettingsTab()
+                new HubSettingsTab(this)
         };
     }
 
